@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react'
-import { View, Image, StyleSheet, Dimensions, Animated, Easing } from 'react-native'
+import { View, Image, StyleSheet, Dimensions, Animated, Easing, StatusBar } from 'react-native'
 import Svg, { Path, G } from 'react-native-svg'
 import { authService } from '../services/auth';
 
@@ -82,6 +82,50 @@ const BlobLayer = ({ path, color, direction = 1, scaleRange = [1, 1.2], opacity 
     )
 }
 
+const EclipseLayer = ({ source, direction = 1, scaleRange = [1, 1.2], opacity = 1, duration, size = '150%', style }) => {
+    const anim = useRef(new Animated.Value(0)).current
+
+    useEffect(() => {
+        Animated.loop(
+            Animated.timing(anim, {
+                toValue: 1,
+                duration: duration,
+                easing: Easing.linear,
+                useNativeDriver: true
+            })
+        ).start()
+    }, [])
+
+    const rotate = anim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', `${360 * direction}deg`]
+    })
+
+    const scale = anim.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [scaleRange[0], scaleRange[1], scaleRange[0]]
+    })
+
+    return (
+        <Animated.View style={[
+            StyleSheet.absoluteFill,
+            style,
+            {
+                justifyContent: 'center',
+                alignItems: 'center',
+                transform: [{ rotate }, { scale }],
+                opacity: opacity
+            }
+        ]}>
+            <Image
+                source={source}
+                style={{ width: size, height: size }}
+                resizeMode="contain"
+            />
+        </Animated.View>
+    )
+}
+
 export default function SplashScreen({ navigation } = {}) {
     // Animation Values
     const riseAnim = useRef(new Animated.Value(0)).current // Entrance opacity/rise
@@ -121,6 +165,7 @@ export default function SplashScreen({ navigation } = {}) {
 
     return (
         <View style={styles.container}>
+            <StatusBar backgroundColor="#212121" barStyle="light-content" />
             <Animated.View style={[
                 styles.blobContainer,
                 {
@@ -131,24 +176,35 @@ export default function SplashScreen({ navigation } = {}) {
                     ]
                 }
             ]}>
-                {/* Layer 1: Dark (Slow, Big) */}
-                <BlobLayer
-                    path={PATH_DARK}
-                    color="#082f20"
-                    duration={20000}
+                {/* Replaced BlobLayers with EclipseLayers */}
+
+                {/* Darker Image (Back) - Positioned Top */}
+                <EclipseLayer
+                    source={require('../assets/images/ecllipse_3.png')}
+                    duration={25000}
                     direction={1}
-                    scaleRange={[1.0, 1.0]}
-                    opacity={0.9}
+                    opacity={0.8}
+                    scaleRange={[0.9, 1.0]}
+                    style={{ top: -80, bottom: 80 }}
                 />
 
-                {/* Layer 2: Green (Medium, Reverse) */}
-                <BlobLayer
-                    path={PATH_GREEN}
-                    color="#008f45"
-                    duration={15000}
+                {/* Middle Image - Centered */}
+                <EclipseLayer
+                    source={require('../assets/images/ecllipse_2.png')}
+                    duration={20000}
                     direction={-1}
-                    scaleRange={[1.2, 1.3]}
-                    opacity={0.7}
+                    opacity={0.8}
+                    scaleRange={[1.0, 1.1]}
+                />
+
+                {/* Lighter Image (Front) - Positioned Bottom */}
+                <EclipseLayer
+                    source={require('../assets/images/ecllipse_1.png')}
+                    duration={15000}
+                    direction={1}
+                    opacity={0.9}
+                    scaleRange={[1.1, 1.2]}
+                    style={{ top: 320, bottom: -120 }}
                 />
 
             </Animated.View>
@@ -183,11 +239,11 @@ const styles = StyleSheet.create({
     },
     blobContainer: {
         position: 'absolute',
-        // Bottom Right positioning
-        bottom: -height * 0.8,
-        right: -height * 0.8,
+        // Center on screen
+        top: (height - BLOB_SIZE) / 2 + 300,
+        left: (width - BLOB_SIZE) / 2 + 200,
         width: BLOB_SIZE,
-        height: BLOB_SIZE, // Square container
+        height: BLOB_SIZE,
         zIndex: 1,
     }
 })

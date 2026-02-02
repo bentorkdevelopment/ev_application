@@ -1,8 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, StatusBar, Platform, Alert, Animated, ActivityIndicator, Linking, Share } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Image, TouchableOpacity, StatusBar, Platform, Alert, Animated, ActivityIndicator, Linking, Share, Dimensions, LayoutAnimation, UIManager } from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, Plus, Minus, HelpCircle, Navigation, Share2, Home, Library, Zap, Wallet, Bell, MapPin } from 'lucide-react-native';
+// Custom Icons
+import SearchIcon from '../assets/icons/Outlined/search_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
+import HelpIcon from '../assets/icons/Outlined/help_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
+import NavigationIcon from '../assets/icons/Outlined/directions_car_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg';
+import ShareIcon from '../assets/icons/Rounded Fill/share_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg'; // Rounded Fill as per availability
+import HomeIcon from '../assets/icons/Outlined/home_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg';
+import LibraryIcon from '../assets/icons/Outlined/library_books_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg';
+import ScanIcon from '../assets/icons/Rounded Fill/qr_code_scanner_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
+import WalletIcon from '../assets/icons/Outlined/wallet_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
+import BellIcon from '../assets/icons/Outlined/notifications_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz48.svg';
+import MapPinIcon from '../assets/icons/Outlined/location_on_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg';
+import BoltIcon from '../assets/icons/Outlined/bolt_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg'; // If needed for Zap in nav item? No, Nav item is Scan now.
+
 import LibraryScreen from './LibraryScreen';
 import StationBottomSheet from '../components/StationBottomSheet';
 import { stationsApi, locationsApi, chargersApi } from '../services/api';
@@ -34,16 +46,32 @@ export default function HomeScreenMain({ navigation }) {
     const [selectedStation, setSelectedStation] = useState(null);
     const [isSheetVisible, setIsSheetVisible] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
-
+    const mapRef = useRef(null);
     useEffect(() => {
+        if (Platform.OS === 'android') {
+            if (UIManager.setLayoutAnimationEnabledExperimental) {
+                UIManager.setLayoutAnimationEnabledExperimental(true);
+            }
+        }
         fetchData();
     }, []);
+
+    const navTabAnim = useRef(new Animated.Value(0)).current; // 0 = Home, 1 = Library
+
+    const handleTabChange = (tab) => {
+        // LayoutAnimation removed for manual Animated control
+        setCurrentTab(tab);
+        Animated.timing(navTabAnim, {
+            toValue: tab === 'Home' ? 0 : 1,
+            duration: 300,
+            useNativeDriver: false, // width/color animations not supported on native driver
+        }).start();
+    };
 
     const fetchData = async () => {
         try {
             console.log("Fetching real data from backend...");
 
-            // Avoid 401 if not logged in
             const token = await authService.getToken();
             if (!token) {
                 console.warn("No auth token found, skipping API calls and using fallback.");
@@ -65,52 +93,67 @@ export default function HomeScreenMain({ navigation }) {
                 })
             ]);
 
-            // If stations failed, throw to catch block to use fallback
             if (!stationsData) throw new Error("Stations API failed");
 
-            // Handle potential response wrappers
             const validStations = Array.isArray(stationsData) ? stationsData : (stationsData?.stations || []);
             const validLocations = Array.isArray(locationsData) ? locationsData : (locationsData?.locations || []);
             const validChargers = Array.isArray(chargersData) ? chargersData : (chargersData?.chargers || []);
 
             setAllChargers(validChargers);
 
-            // Map location by NAME for fast lookup
             const locationsMap = new Map();
             if (Array.isArray(validLocations)) {
-                validLocations.forEach(loc => locationsMap.set(loc.name, loc));
+                validLocations.forEach(loc => locationsMap.set(loc.id, loc));
             }
 
-            const mergedStations = validStations.map(st => {
-                const loc = locationsMap.get(st.locationName);
-                const lat = (loc && loc.latitude) ? parseFloat(loc.latitude) : (st.latitude ? parseFloat(st.latitude) : 18.5204);
-                const lng = (loc && loc.longitude) ? parseFloat(loc.longitude) : (st.longitude ? parseFloat(st.longitude) : 73.8567);
+            const mergedStations = validStations.map((st, index) => {
+                const loc = locationsMap.get(st.locationId) ||
+                    (st.locationName ? Array.from(locationsMap.values()).find(l => l.name === st.locationName) : null);
+
+                let lat = 18.5204;
+                let lng = 73.8567;
+
+                if (loc && loc.latitude && loc.longitude) {
+                    lat = parseFloat(loc.latitude);
+                    lng = parseFloat(loc.longitude);
+                } else if (st.latitude && st.longitude) {
+                    lat = parseFloat(st.latitude);
+                    lng = parseFloat(st.longitude);
+                } else {
+                    lat = 18.5204 + (index * 0.01);
+                    lng = 73.8567 + (index * 0.005);
+                }
 
                 return {
                     ...st,
                     latitude: lat,
                     longitude: lng,
-                    location: loc ? `${loc.address}, ${loc.city}, ${loc.state}` : (st.locationName || 'Unknown Location'),
+                    location: loc ? `${loc.address || ''}, ${loc.city || ''}` : (st.locationName || 'Unknown Location'),
                     image_url: st.imageUrl || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80',
                     chargerId: st.id ? `STN-${st.id}` : 'UNKNOWN',
                     chargerType: 'Fast'
                 };
             });
 
-            // Fallback if no stations found
+            console.log("Merged Stations Count:", mergedStations.length);
+
             if (mergedStations.length === 0) throw new Error("No stations found");
 
             setStations(mergedStations);
 
-            // Auto-center on first station
             setRegion({
                 latitude: mergedStations[0].latitude,
                 longitude: mergedStations[0].longitude,
                 latitudeDelta: 0.0922,
                 longitudeDelta: 0.0421,
             });
+            mapRef.current?.animateToRegion({
+                latitude: mergedStations[0].latitude,
+                longitude: mergedStations[0].longitude,
+                latitudeDelta: 0.0922,
+                longitudeDelta: 0.0421,
+            }, 1000);
 
-            // Default to first station selected for UI interaction test
             setSelectedStation(mergedStations[0]);
 
         } catch (error) {
@@ -150,12 +193,14 @@ export default function HomeScreenMain({ navigation }) {
 
     const handleStationPress = (station) => {
         setSelectedStation(station);
-        setRegion({
+        const newRegion = {
             latitude: Number(station.latitude),
             longitude: Number(station.longitude),
             latitudeDelta: 0.01,
             longitudeDelta: 0.01,
-        });
+        };
+        setRegion(newRegion);
+        mapRef.current?.animateToRegion(newRegion, 1000);
     };
 
     const handleCardPress = () => {
@@ -169,7 +214,6 @@ export default function HomeScreenMain({ navigation }) {
     const handleSelectCharger = (charger) => {
         setIsSheetVisible(false);
 
-        // Determine connector fallback
         const typeStr = (charger.chargerType || charger.type || '').toString().toUpperCase();
         const isAC = typeStr.includes('AC');
         const fallbackConnector = isAC ? 'Type 2' : 'CCS 2';
@@ -180,7 +224,7 @@ export default function HomeScreenMain({ navigation }) {
             chargerId: charger.ocppId || charger.charger_id || charger.id || 'Unknown',
             chargerType: charger.chargerType || charger.type || 'Fast',
             maxPower: charger.max_power || charger.rate || 'Unknown',
-            connectorType: charger.connectorType || charger.connector_type || fallbackConnector,
+            connectorType: charger.connectorType || charger.connectorType || fallbackConnector,
             status: (charger.status === 'Available' || (!charger.occupied && charger.availability)) ? 'Available' : (charger.status || 'Busy')
         });
     };
@@ -209,16 +253,30 @@ export default function HomeScreenMain({ navigation }) {
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+            <StatusBar barStyle="light-content" backgroundColor="#212121" />
 
-            {/* Map */}
-            {currentTab === 'Home' && (
+            {/* Map (Persisted) */}
+            <Animated.View
+                pointerEvents={currentTab === 'Home' ? 'auto' : 'none'}
+                style={[
+                    StyleSheet.absoluteFill,
+                    {
+                        opacity: navTabAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 0]
+                        })
+                    }
+                ]}
+            >
                 <MapView
+                    ref={mapRef}
+                    provider={PROVIDER_GOOGLE}
                     style={styles.map}
-                    region={region}
-                    mapType={Platform.OS === 'android' ? 'none' : 'standard'}
-                    rotateEnabled={false}
-                    onRegionChangeComplete={setRegion}
+                    initialRegion={region}
+                    mapType="standard"
+                    showsUserLocation={true}
+                    showsTraffic={true}
+                    showsIndoors={true}
                 >
                     {stations.map((station, index) => (
                         <Marker
@@ -228,33 +286,33 @@ export default function HomeScreenMain({ navigation }) {
                             zIndex={selectedStation?.id === station.id ? 10 : 1}
                         >
                             <View style={styles.customMarker}>
-                                <MapPin
-                                    size={selectedStation?.id === station.id ? 32 : 24}
-                                    color={selectedStation?.id === station.id ? "#00E5FF" : "#4CAF50"}
-                                    fill={selectedStation?.id === station.id ? "#00E5FF" : "#4CAF50"}
+                                <MapPinIcon
+                                    width={selectedStation?.id === station.id ? 32 : 24}
+                                    height={selectedStation?.id === station.id ? 32 : 24}
+                                    fill={selectedStation?.id === station.id ? "#e79200ff" : "#4CAF50"}
                                 />
                                 <View style={styles.markerDot} />
                             </View>
                         </Marker>
                     ))}
                 </MapView>
-            )}
+            </Animated.View>
 
             {/* Header */}
             <SafeAreaView style={styles.headerContainer} edges={['top']}>
                 <View style={styles.headerContent}>
                     <Image
-                        source={require('../assets/images/logo_inverted.png')}
+                        source={require('../assets/images/logo.png')}
                         style={styles.logo}
                         resizeMode="contain"
                         tintColor="#ffffffff"
                     />
                     <View style={styles.headerIcons}>
                         <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Wallet')}>
-                            <Wallet color="#ffffffff" size={18} />
+                            <WalletIcon width={24} height={24} fill="#ffffff" />
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Notification')}>
-                            <Bell color="#ffffffff" size={18} />
+                            <BellIcon width={24} height={24} fill="#ffffff" />
                             <View style={styles.badge}>
                                 <Text style={styles.badgeText}>7</Text>
                             </View>
@@ -263,53 +321,78 @@ export default function HomeScreenMain({ navigation }) {
                 </View>
             </SafeAreaView>
 
-            {/* Floating Controls */}
-            {currentTab === 'Home' && (
-                <>
-                    <TouchableOpacity style={styles.searchButton}>
-                        <Search color="#fff" size={24} />
-                    </TouchableOpacity>
+            {/* Floating Controls (Home Only) */}
+            <Animated.View
+                pointerEvents={currentTab === 'Home' ? 'box-none' : 'none'}
+                style={[
+                    StyleSheet.absoluteFill,
+                    {
+                        opacity: navTabAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 0]
+                        })
+                    }
+                ]}
+            >
+                <TouchableOpacity style={styles.searchButton}>
+                    <SearchIcon width={24} height={24} fill="#fff" />
+                </TouchableOpacity>
 
-                    <View style={[styles.zoomControls, { bottom: selectedStation ? 340 : 120 }]}>
-                        <TouchableOpacity style={styles.zoomBtn}>
-                            <Plus color="#000" size={24} />
-                        </TouchableOpacity>
-                        <View style={styles.divider} />
-                        <TouchableOpacity style={styles.zoomBtn}>
-                            <Minus color="#000" size={24} />
-                        </TouchableOpacity>
-                    </View>
 
-                    <TouchableOpacity style={[styles.helpButton, { bottom: selectedStation ? 340 : 120 }]}>
-                        <HelpCircle color="#fff" size={28} />
-                    </TouchableOpacity>
+                <TouchableOpacity style={[styles.helpButton, { bottom: selectedStation ? 340 : 120 }]}>
+                    <HelpIcon width={28} height={28} fill="#fff" />
+                </TouchableOpacity>
 
-                    {/* Station Card - Dynamic & Pressable */}
-                    {selectedStation && (
+                {/* Stations Horizontal Scroll List */}
+                <Animated.FlatList
+                    data={stations}
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    snapToInterval={Dimensions.get('window').width * 0.9 + 20} // Card width + margin
+                    decelerationRate="fast"
+                    contentContainerStyle={{ paddingHorizontal: (Dimensions.get('window').width - (Dimensions.get('window').width * 0.9)) / 2 }}
+                    keyExtractor={(item, index) => `${item.id}_${index}`}
+                    onViewableItemsChanged={({ viewableItems }) => {
+                        if (viewableItems.length > 0) {
+                            const newItem = viewableItems[0].item;
+                            if (newItem.id !== selectedStation?.id) {
+                                handleStationPress(newItem); // Reuse logic to update map
+                            }
+                        }
+                    }}
+                    viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+                    renderItem={({ item }) => (
                         <TouchableOpacity
-                            style={styles.cardContainer}
+                            style={[styles.cardContainer, {
+                                width: Dimensions.get('window').width * 0.9,
+                                marginRight: 20,
+                                // Override absolute positioning from styles
+                                position: 'relative',
+                                bottom: 0, left: 0, right: 0
+                            }]}
                             activeOpacity={0.9}
                             onPress={handleCardPress}
                         >
                             <View style={styles.cardContentRow}>
                                 <View style={styles.leftColumn}>
-                                    <Text style={styles.stationName}>{selectedStation.name}</Text>
+                                    <Text style={styles.stationName}>{item.name}</Text>
                                     <View style={styles.ratingRow}>
                                         <Text style={styles.ratingText}>4.3</Text>
                                         <StarRating rating={4.3} />
                                     </View>
                                     <Text style={styles.addressText} numberOfLines={2}>
-                                        {selectedStation.location}
+                                        {item.location}
                                     </Text>
-                                    <Text style={[styles.statusText, { color: allChargers.filter(c => c.stationId === selectedStation.id && (c.status === 'Available' || (!c.occupied && c.availability))).length > 0 ? '#00E676' : '#FF4213' }]}>
-                                        {allChargers.filter(c => c.stationId === selectedStation.id && (c.status === 'Available' || (!c.occupied && c.availability))).length} Chargers Available
+                                    <Text style={[styles.statusText, { color: allChargers.filter(c => c.stationId === item.id && (c.status === 'Available' || (!c.occupied && c.availability))).length > 0 ? '#00E676' : '#FF4213' }]}>
+                                        {allChargers.filter(c => c.stationId === item.id && (c.status === 'Available' || (!c.occupied && c.availability))).length} Chargers Available
                                     </Text>
                                 </View>
 
                                 <View style={styles.rightColumn}>
                                     <View style={styles.imageContainer}>
                                         <Image
-                                            source={{ uri: selectedStation.image_url || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7' }}
+                                            source={{ uri: item.image_url || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7' }}
                                             style={styles.stationImage}
                                         />
                                         <View style={styles.imageOverlay} />
@@ -318,13 +401,13 @@ export default function HomeScreenMain({ navigation }) {
                                     <View style={styles.cardActions}>
                                         <TouchableOpacity style={styles.actionBtn} onPress={handleDirections}>
                                             <View style={styles.actionIconCircle}>
-                                                <Navigation color="#000" size={24} />
+                                                <NavigationIcon width={24} height={24} fill="#000" />
                                             </View>
                                             <Text style={styles.actionText}>Go</Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity style={styles.actionBtn} onPress={handleShare}>
                                             <View style={styles.actionIconCircle}>
-                                                <Share2 color="#000" size={24} />
+                                                <ShareIcon width={24} height={24} fill="#000" />
                                             </View>
                                             <Text style={styles.actionText}>Share</Text>
                                         </TouchableOpacity>
@@ -333,42 +416,86 @@ export default function HomeScreenMain({ navigation }) {
                             </View>
                         </TouchableOpacity>
                     )}
+                    style={{
+                        position: 'absolute',
+                        bottom: 100,
+                        left: 0,
+                        right: 0,
+                        zIndex: 10,
+                    }}
+                />
 
-                    <StationBottomSheet
-                        station={selectedStation}
-                        chargers={allChargers}
-                        visible={isSheetVisible}
-                        onClose={handleCloseBottomSheet}
-                        onSelectCharger={handleSelectCharger}
-                    />
-                </>
-            )}
+                <StationBottomSheet
+                    station={selectedStation}
+                    chargers={allChargers}
+                    visible={isSheetVisible}
+                    onClose={handleCloseBottomSheet}
+                    onSelectCharger={handleSelectCharger}
+                />
+            </Animated.View>
 
-            {/* Library Screen */}
-            {currentTab === 'Library' && <LibraryScreen navigation={navigation} />}
+            {/* Library Screen (Persisted) */}
+            <Animated.View
+                pointerEvents={currentTab === 'Library' ? 'auto' : 'none'}
+                style={[
+                    {
+                        flex: 1,
+                        opacity: navTabAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, 1]
+                        })
+                    }
+                ]}
+            >
+                <LibraryScreen navigation={navigation} />
+            </Animated.View>
 
             {/* Bottom Nav */}
             <View style={styles.bottomNav}>
-                <TouchableOpacity style={styles.navItem} onPress={() => setCurrentTab('Home')}>
-                    <View style={currentTab === 'Home' ? styles.activeNavPill : null}>
-                        <Home color={currentTab === 'Home' ? "#000" : "#fff"} size={24} />
-                    </View>
+                <TouchableOpacity style={styles.navItem} onPress={() => handleTabChange('Home')}>
+                    <Animated.View style={[styles.navPill, {
+                        width: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [64, 30] }),
+                        backgroundColor: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: ['#ffffff', 'rgba(30,30,30,0)'] })
+                    }]}>
+                        <View style={styles.iconNavContainer}>
+                            {/* Active Icon (Black) - Visible at 0 */}
+                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }]}>
+                                <HomeIcon width={24} height={24} fill="#000" />
+                            </Animated.View>
+                            {/* Inactive Icon (White) - Visible at 1 */}
+                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) }]}>
+                                <HomeIcon width={24} height={24} fill="#fff" />
+                            </Animated.View>
+                        </View>
+                    </Animated.View>
                     <Text style={currentTab === 'Home' ? styles.navTextActive : styles.navText}>Home</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                     style={styles.centerNavBtnContainer}
-                    onPress={() => navigation.navigate('Config')}
+                    onPress={() => navigation.navigate('QRScanner')}
                 >
                     <View style={styles.centerNavBtn}>
-                        <Zap color="#000" size={32} fill="#000" />
+                        <ScanIcon width={32} height={32} fill="#000" />
                     </View>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.navItem} onPress={() => setCurrentTab('Library')}>
-                    <View style={currentTab === 'Library' ? styles.activeNavPill : null}>
-                        <Library color={currentTab === 'Library' ? "#000" : "#fff"} size={24} />
-                    </View>
+                <TouchableOpacity style={styles.navItem} onPress={() => handleTabChange('Library')}>
+                    <Animated.View style={[styles.navPill, {
+                        width: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 70] }),
+                        backgroundColor: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(30,30,30,0)', '#ffffff'] })
+                    }]}>
+                        <View style={styles.iconNavContainer}>
+                            {/* Inactive Icon (White) - Visible at 0 */}
+                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }]}>
+                                <LibraryIcon width={24} height={24} fill="#fff" />
+                            </Animated.View>
+                            {/* Active Icon (Black) - Visible at 1 */}
+                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) }]}>
+                                <LibraryIcon width={24} height={24} fill="#000" />
+                            </Animated.View>
+                        </View>
+                    </Animated.View>
                     <Text style={currentTab === 'Library' ? styles.navTextActive : styles.navText}>Library</Text>
                 </TouchableOpacity>
             </View>
@@ -620,23 +747,25 @@ const styles = StyleSheet.create({
     navItem: {
         alignItems: 'center',
         justifyContent: 'center',
-        width: 60,
+        width: 70, // Slightly wider to accommodate pill expansion
     },
-    activeNavPill: {
-        backgroundColor: '#fff',
+    navPill: {
         borderRadius: 20,
-        paddingHorizontal: 20,
-        paddingVertical: 5,
-        marginBottom: 5,
+        height: 38,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 0,
+        overflow: 'hidden',
     },
     navTextActive: {
         color: '#fff',
         fontSize: 12,
+        marginTop: 2,
     },
     navText: {
         color: '#888',
         fontSize: 12,
-        marginTop: 5,
+        marginTop: 2,
     },
     centerNavBtnContainer: {
         top: -30,
@@ -654,5 +783,14 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 5,
+    },
+    iconNavContainer: {
+        width: 24,
+        height: 24,
+    },
+    iconNavWrapper: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });

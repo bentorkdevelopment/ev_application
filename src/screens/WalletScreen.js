@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ArrowDown, ArrowUp, X, Wallet as WalletIcon } from 'lucide-react-native';
 import { authService } from '../services/auth';
-import { authApi, userApi } from '../services/api';
+import { authApi, userApi, razorpayApi } from '../services/api';
 import api from '../services/api';
+import RazorpayCheckout from 'react-native-razorpay';
+import { RAZORPAY_KEY_ID } from '@env';
 
 const { width } = Dimensions.get('window');
 
@@ -38,8 +40,15 @@ export default function WalletScreen({ navigation }) {
     const fetchWalletBalance = async (email) => {
         try {
             const userDetails = await userApi.getUserDetails(email);
-            if (userDetails && userDetails.walletBalance !== undefined) {
-                setWalletBalance(userDetails.walletBalance);
+            if (userDetails) {
+                // Update local user state with full details from backend (includes ID and real balance)
+                setUser(prev => ({ ...prev, ...userDetails }));
+                // Also update stored user data to persist the ID
+                authService.setUser({ ...user, ...userDetails });
+
+                if (userDetails.walletBalance !== undefined) {
+                    setWalletBalance(userDetails.walletBalance);
+                }
             }
         } catch (error) {
             console.error("Failed to fetch wallet balance", error);
@@ -61,6 +70,100 @@ export default function WalletScreen({ navigation }) {
         const current = parseFloat(amount) || 0;
         const next = current + val;
         setAmount(next > 100000 ? '100000' : next.toString());
+    };
+
+    const handlePayment = async () => {
+        if (!amount) return;
+
+        // Ensure we have a valid User ID from the latest state
+        const userId = user?.id || user?.userId;
+
+        if (!userId) {
+            console.error("Payment failed: Missing User ID. User object:", user);
+            Alert.alert("Session Error", "Could not identify user. Please wait a moment or try logging in again.");
+            return;
+        }
+
+        try {
+            setLoading(true);
+            // 1. Create Order on Backend
+            console.log("Creating order for amount:", amount);
+            const orderData = await razorpayApi.createOrder(amount);
+            console.log("Order created:", orderData);
+
+            // Backend returns the order object or ID. Usually orderData.id is the order_id.
+            // Adjust based on actual backend response format found during runtime if needed.
+            // Assuming orderData is the Order object which has 'id', 'amount', etc.
+            const orderId = orderData.id || orderData; // Fallback if returns string directly
+
+            const options = {
+                description: 'Wallet Recharge',
+                image: 'https://github.com/StartLedger/ev-ui/blob/main/src/assets/images/logo.png?raw=true',
+                currency: 'INR',
+                key: RAZORPAY_KEY_ID,
+                amount: parseFloat(amount) * 100, // Amount in paise
+                name: 'Bentork EV',
+                order_id: orderId, // Pass the order ID created on backend
+                prefill: {
+                    email: user?.email || 'user@bentork.in',
+                    contact: user?.phone || '9999999999',
+                    name: user?.name || 'Bentork User'
+                },
+                theme: { color: '#39E29B' }
+            };
+
+            RazorpayCheckout.open(options).then(async (data) => {
+                // handle success
+                console.log(`Razorpay Success: ${data.razorpay_payment_id}`);
+
+                // 2. Verify Payment on Backend
+                try {
+                    const verificationPayload = {
+                        order_id: data.razorpay_order_id,
+                        payment_id: data.razorpay_payment_id,
+                        signature: data.razorpay_signature,
+                        user_id: userId.toString()
+                    };
+
+                    console.log("Verifying payment...", verificationPayload);
+                    const verificationResponse = await razorpayApi.verifyPayment(verificationPayload);
+
+                    console.log("Verification Success:", verificationResponse);
+
+                    Alert.alert("Success", "Wallet updated successfully!");
+
+                    // 3. Update UI
+                    setShowAddModal(false);
+                    setAmount('');
+
+                    // Update balance and transactions by reloading full data
+                    if (verificationResponse.walletAmount) {
+                        console.log("Setting balance from response:", verificationResponse.walletAmount);
+                        setWalletBalance(verificationResponse.walletAmount);
+                    }
+
+                    // Reload all data to ensure synchronization
+                    loadData();
+
+                } catch (verifyErr) {
+                    console.error("Verification Failed:", verifyErr);
+                    Alert.alert("Payment Verification Failed", "Payment was successful but verification failed. Please contact support.");
+                }
+
+            }).catch((error) => {
+                // handle failure
+                console.log(`Razorpay Error: ${error.code} | ${error.description}`);
+                if (error.code !== 0) {
+                    Alert.alert("Payment Failed", error.description);
+                }
+            });
+
+        } catch (err) {
+            console.error("Order Creation Failed:", err);
+            Alert.alert("Error", "Failed to initiate payment. Please try again.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     const GST_RATE = 0.18;
@@ -218,7 +321,11 @@ export default function WalletScreen({ navigation }) {
                             </View>
                         </View>
 
-                        <TouchableOpacity style={[styles.payBtn, { opacity: !amount ? 0.5 : 1 }]} disabled={!amount}>
+                        <TouchableOpacity
+                            style={[styles.payBtn, { opacity: !amount ? 0.5 : 1 }]}
+                            disabled={!amount}
+                            onPress={handlePayment}
+                        >
                             <Text style={styles.payBtnText}>Pay ₹{amount || 0}</Text>
                         </TouchableOpacity>
 

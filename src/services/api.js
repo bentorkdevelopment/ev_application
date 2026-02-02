@@ -207,10 +207,20 @@ export const plansApi = {
     }
 };
 
+
+
 export const stationsApi = {
     getAllStations: async () => {
         try {
             const response = await api.get('/stations/all');
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getPublicStations: async () => {
+        try {
+            const response = await publicApi.get('/stations/all');
             return response.data;
         } catch (error) {
             throw error;
@@ -241,6 +251,25 @@ export const chargersApi = {
     getAllChargers: async () => {
         try {
             const response = await api.get('/chargers/all');
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const razorpayApi = {
+    createOrder: async (amount) => {
+        try {
+            const response = await api.post('/razorpay/create-order', { amount: amount.toString() });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    verifyPayment: async (paymentData) => {
+        try {
+            const response = await api.post('/razorpay/verify-payment', paymentData);
             return response.data;
         } catch (error) {
             throw error;

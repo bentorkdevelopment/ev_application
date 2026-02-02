@@ -2,7 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, StatusBar, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { ArrowLeft, Wallet, Menu, ChevronRight, Zap, Info, ShieldCheck, HelpCircle, Plus, Minus, MapPin } from 'lucide-react-native';
+// Custom Icons
+import ArrowBackIcon from '../assets/icons/Outlined/arrow_back_ios_new_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
+import WalletIcon from '../assets/icons/Outlined/wallet_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
+import BoltIcon from '../assets/icons/Outlined/bolt_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg';
+import AddIcon from '../assets/icons/Outlined/add_24dp_E3E3E3_FILL0_wght400_GRAD-25_opsz24.svg';
+import RemoveIcon from '../assets/icons/Rounded Fill/substract.svg';
+
 import LinearGradient from 'react-native-svg'; // You might need react-native-linear-gradient but user said "Use Vanilla CSS" style logic. 
 // Actually linear-gradient is native. I'll use simple views if not installed.
 import { Colors } from '../styles/GlobalStyles';
@@ -132,17 +138,15 @@ export default function ConfigScreen({ route }) {
                 <View style={styles.topBarContent}>
                     <View style={styles.leftNav}>
                         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
-                            <ArrowLeft color="#fff" size={24} />
+                            <ArrowBackIcon width={24} height={24} fill="#fff" />
                         </TouchableOpacity>
                         <Text style={styles.pageTitle}>Charging Config</Text>
                     </View>
 
                     <View style={styles.rightNav}>
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Map')}>
-                            <MapPin color="#fff" size={24} />
-                        </TouchableOpacity>
+
                         <TouchableOpacity style={styles.walletPill} onPress={() => navigation.navigate('Wallet')}>
-                            <Wallet color="#fff" size={14} />
+                            <WalletIcon width={14} height={14} fill="#fff" />
                             <Text style={styles.walletText}>₹ {walletBalance}</Text>
                         </TouchableOpacity>
                     </View>
@@ -162,7 +166,7 @@ export default function ConfigScreen({ route }) {
                     </View>
                     {/* Placeholder for Charger Image */}
                     <View style={styles.chargerImgBox}>
-                        <Zap size={32} color={Colors.primaryContainer} />
+                        <BoltIcon width={32} height={32} fill={Colors.primaryContainer} />
                     </View>
                 </View>
 
@@ -180,14 +184,14 @@ export default function ConfigScreen({ route }) {
                             onPress={() => setCustomPower(p => Math.max(1, p - 5))}
                             style={styles.powerBtn}
                         >
-                            <Minus size={20} color="#fff" />
+                            <RemoveIcon width={20} height={20} fill="#fff" />
                         </TouchableOpacity>
                         <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold', minWidth: 60, textAlign: 'center' }}>{customPower} kW</Text>
                         <TouchableOpacity
                             onPress={() => setCustomPower(p => Math.min(Number(maxPower) || 120, p + 5))}
                             style={styles.powerBtn}
                         >
-                            <Plus size={20} color="#fff" />
+                            <AddIcon width={20} height={20} fill="#fff" />
                         </TouchableOpacity>
                     </View>
                 </View>
