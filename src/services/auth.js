@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const TOKEN_KEY = 'user_token';
 const USER_KEY = 'user_info';
 
+const ADMIN_TOKEN_KEY = 'admin_token';
+
 export const authService = {
     setToken: async (token) => {
         try {
@@ -17,6 +19,23 @@ export const authService = {
             return await AsyncStorage.getItem(TOKEN_KEY);
         } catch (e) {
             console.error('Error getting token', e);
+            return null;
+        }
+    },
+
+    setAdminToken: async (token) => {
+        try {
+            await AsyncStorage.setItem(ADMIN_TOKEN_KEY, token);
+        } catch (e) {
+            console.error('Error saving admin token', e);
+        }
+    },
+
+    getAdminToken: async () => {
+        try {
+            return await AsyncStorage.getItem(ADMIN_TOKEN_KEY);
+        } catch (e) {
+            console.error('Error getting admin token', e);
             return null;
         }
     },
@@ -49,7 +68,7 @@ export const authService = {
 
     logout: async () => {
         try {
-            await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
+            await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY, ADMIN_TOKEN_KEY]);
         } catch (e) {
             console.error('Error logging out', e);
         }

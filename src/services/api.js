@@ -15,6 +15,77 @@ const api = axios.create({
     },
 });
 
+// Unified Error Handler
+const handleApiError = (error) => {
+    // 1. Detailed Logging for Debugging
+    const errorLog = {
+        message: error.message,
+        url: error.config?.url,
+        method: error.config?.method?.toUpperCase(),
+        status: error.response?.status,
+        data: error.response?.data,
+        headers: error.response?.headers,
+    };
+
+    if (error.response) {
+        console.error('<<< API Error Response:', JSON.stringify(errorLog, null, 2));
+    } else if (error.request) {
+        console.error('<<< API No Response:', error.message);
+    } else {
+        console.error('<<< API Setup Error:', error.message);
+    }
+
+    // 2. Generate User-Friendly Message
+    let userMessage = 'Something went wrong. Please try again.';
+
+    if (error.response) {
+        const { status, data } = error.response;
+
+        // Check if server sent a specific message
+        if (data && typeof data === 'string' && data.length > 0 && data.length < 100) {
+            // Use server message if it's a short string (likely a message)
+            userMessage = data;
+        } else if (data && data.message) {
+            userMessage = data.message;
+        } else {
+            // Fallback based on status code
+            switch (status) {
+                case 400:
+                    userMessage = 'Invalid request. Please check your inputs.';
+                    break;
+                case 401:
+                    userMessage = 'Session expired. Please login again.';
+                    break;
+                case 403:
+                    userMessage = 'You do not have permission to perform this action.';
+                    break;
+                case 404:
+                    userMessage = 'Resource not found.';
+                    break;
+                case 500:
+                    userMessage = 'Internal server error. Please try again later.';
+                    break;
+                case 503:
+                    userMessage = 'Service unavailable. Please try again later.';
+                    break;
+                default:
+                    userMessage = `Unexpected error (${status}).`;
+            }
+        }
+    } else if (error.code === 'ECONNABORTED') {
+        userMessage = 'Request timed out. Please check your connection.';
+    } else if (error.request) {
+        userMessage = 'Network error. Please check your internet connection.';
+    } else {
+        userMessage = 'An unexpected application error occurred.';
+    }
+
+    // Attach the user-friendly message to the error object
+    error.userMessage = userMessage;
+
+    return Promise.reject(error);
+};
+
 // Add a request interceptor to add the auth token
 api.interceptors.request.use(
     async (config) => {
@@ -22,11 +93,21 @@ api.interceptors.request.use(
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }
+        console.log('>>> Auth Request:', config.method.toUpperCase(), config.url);
         return config;
     },
     (error) => {
+        console.error('>>> Request Error:', error);
         return Promise.reject(error);
     }
+);
+
+api.interceptors.response.use(
+    response => {
+        console.log('<<< Auth Response:', response.status, response.config.url); // Log simpler success
+        return response;
+    },
+    handleApiError
 );
 
 // Create a separate instance for public requests to avoid 401 loop if token is invalid
@@ -40,26 +121,16 @@ const publicApi = axios.create({
 
 // Debug Logging
 publicApi.interceptors.request.use(request => {
-    console.log('>>> Request:', request.method.toUpperCase(), request.url, request.params);
+    console.log('>>> Public Request:', request.method.toUpperCase(), request.url);
     return request;
 });
 
 publicApi.interceptors.response.use(
     response => {
-        console.log('<<< Response:', response.status, response.data);
+        console.log('<<< Public Response:', response.status, response.config.url);
         return response;
     },
-    error => {
-        console.log('<<< Error:', error.message);
-        if (error.response) {
-            console.log('    Status:', error.response.status);
-            console.log('    Data:', error.response.data);
-            console.log('    Headers:', error.response.headers);
-        } else if (error.request) {
-            console.log('    No response received', error.request);
-        }
-        return Promise.reject(error);
-    }
+    handleApiError
 );
 
 export const authApi = {
@@ -70,6 +141,106 @@ export const authApi = {
             const response = await publicApi.get(`/user/google-login-success`, {
                 params: { email }
             });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const adminApi = {
+    login: async (emailOrMobile, password) => {
+        try {
+            const response = await publicApi.post('/admin/login', {
+                emailOrMobile,
+                password
+            });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    signup: async (name, email, mobile, password, confirmPassword) => {
+        try {
+            const response = await publicApi.post('/admin/signup', {
+                name,
+                email,
+                mobile,
+                password,
+                confirmPassword
+            });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const userApi = {
+    getUserDetails: async (email) => {
+        try {
+            const response = await api.get(`/user/byemail/${email}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getWalletDetails: async (userId) => {
+        try {
+            const response = await api.get(`/wallet/history/${userId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const plansApi = {
+    getAllPlans: async () => {
+        try {
+            // User confirmed plans need authentication.
+            const response = await api.get('/plans/all');
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const stationsApi = {
+    getAllStations: async () => {
+        try {
+            const response = await api.get('/stations/all');
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const locationsApi = {
+    getAllLocations: async () => {
+        try {
+            const response = await api.get('/location/all');
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getLocationById: async (id) => {
+        try {
+            const response = await api.get(`/location/${id}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const chargersApi = {
+    getAllChargers: async () => {
+        try {
+            const response = await api.get('/chargers/all');
             return response.data;
         } catch (error) {
             throw error;
