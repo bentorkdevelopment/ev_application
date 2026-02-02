@@ -1,11 +1,26 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, StatusBar, FlatList, Platform } from 'react-native';
-import MapView, { Marker, UrlTile } from 'react-native-maps';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Image, TouchableOpacity, StatusBar, Platform, Alert, Animated, ActivityIndicator, Linking, Share } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, Plus, Minus, HelpCircle, Navigation, Share2, Home, Library, Zap, Wallet, Bell, MapPin, WrapText } from 'lucide-react-native';
+import { Search, Plus, Minus, HelpCircle, Navigation, Share2, Home, Library, Zap, Wallet, Bell, MapPin } from 'lucide-react-native';
 import LibraryScreen from './LibraryScreen';
+import StationBottomSheet from '../components/StationBottomSheet';
+import { stationsApi, locationsApi, chargersApi } from '../services/api';
+import { authService } from '../services/auth';
 
-export default function HomeScreen() {
+const StarRating = ({ rating }) => {
+    return (
+        <View style={{ flexDirection: 'row' }}>
+            {[1, 2, 3, 4, 5].map((star) => (
+                <Text key={star} style={{ color: star <= Math.floor(rating) ? '#FFD700' : '#555', fontSize: 14 }}>
+                    ★
+                </Text>
+            ))}
+        </View>
+    );
+};
+
+export default function HomeScreenMain({ navigation }) {
     const [currentTab, setCurrentTab] = useState('Home');
     const [region, setRegion] = useState({
         latitude: 18.5204, // Pune approx
@@ -14,25 +29,184 @@ export default function HomeScreen() {
         longitudeDelta: 0.0421,
     });
 
-    const markers = [
-        { id: 1, lat: 18.5204, lng: 73.8567 },
-        { id: 2, lat: 18.5304, lng: 73.8667 },
-        { id: 3, lat: 18.5104, lng: 73.8467 },
-        { id: 4, lat: 18.5404, lng: 73.8367 },
-        { id: 5, lat: 18.5004, lng: 73.8767 },
-    ];
+    const [stations, setStations] = useState([]);
+    const [allChargers, setAllChargers] = useState([]);
+    const [selectedStation, setSelectedStation] = useState(null);
+    const [isSheetVisible, setIsSheetVisible] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const StarRating = ({ rating }) => {
-        return (
-            <View style={{ flexDirection: 'row' }}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                    <Text key={star} style={{ color: star <= Math.floor(rating) ? '#FFD700' : '#555', fontSize: 14 }}>
-                        ★
-                    </Text>
-                ))}
-            </View>
-        );
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            console.log("Fetching real data from backend...");
+
+            // Avoid 401 if not logged in
+            const token = await authService.getToken();
+            if (!token) {
+                console.warn("No auth token found, skipping API calls and using fallback.");
+                throw new Error("No auth token");
+            }
+
+            const [stationsData, locationsData, chargersData] = await Promise.all([
+                stationsApi.getAllStations().catch(err => {
+                    console.warn("Failed to fetch stations:", err);
+                    return null;
+                }),
+                locationsApi.getAllLocations().catch(err => {
+                    console.warn("Failed to fetch locations:", err);
+                    return [];
+                }),
+                chargersApi.getAllChargers().catch(err => {
+                    console.warn("Failed to fetch chargers:", err);
+                    return [];
+                })
+            ]);
+
+            // If stations failed, throw to catch block to use fallback
+            if (!stationsData) throw new Error("Stations API failed");
+
+            // Handle potential response wrappers
+            const validStations = Array.isArray(stationsData) ? stationsData : (stationsData?.stations || []);
+            const validLocations = Array.isArray(locationsData) ? locationsData : (locationsData?.locations || []);
+            const validChargers = Array.isArray(chargersData) ? chargersData : (chargersData?.chargers || []);
+
+            setAllChargers(validChargers);
+
+            // Map location by NAME for fast lookup
+            const locationsMap = new Map();
+            if (Array.isArray(validLocations)) {
+                validLocations.forEach(loc => locationsMap.set(loc.name, loc));
+            }
+
+            const mergedStations = validStations.map(st => {
+                const loc = locationsMap.get(st.locationName);
+                const lat = (loc && loc.latitude) ? parseFloat(loc.latitude) : (st.latitude ? parseFloat(st.latitude) : 18.5204);
+                const lng = (loc && loc.longitude) ? parseFloat(loc.longitude) : (st.longitude ? parseFloat(st.longitude) : 73.8567);
+
+                return {
+                    ...st,
+                    latitude: lat,
+                    longitude: lng,
+                    location: loc ? `${loc.address}, ${loc.city}, ${loc.state}` : (st.locationName || 'Unknown Location'),
+                    image_url: st.imageUrl || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80',
+                    chargerId: st.id ? `STN-${st.id}` : 'UNKNOWN',
+                    chargerType: 'Fast'
+                };
+            });
+
+            // Fallback if no stations found
+            if (mergedStations.length === 0) throw new Error("No stations found");
+
+            setStations(mergedStations);
+
+            // Auto-center on first station
+            setRegion({
+                latitude: mergedStations[0].latitude,
+                longitude: mergedStations[0].longitude,
+                latitudeDelta: 0.0922,
+                longitudeDelta: 0.0421,
+            });
+
+            // Default to first station selected for UI interaction test
+            setSelectedStation(mergedStations[0]);
+
+        } catch (error) {
+            console.error("Using static fallback:", error);
+            const mockStations = [
+                {
+                    id: 1,
+                    name: 'Bentork Charging Station - Pune',
+                    location: 'City Center, 15 & 15A, Connaught Rd, near Lemon Tree Premier Hotel, Modi Colony, Pune, Maharashtra 411001',
+                    latitude: 18.5204,
+                    longitude: 73.8567,
+                    status: 'Active',
+                    image_url: 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80'
+                },
+                {
+                    id: 2,
+                    name: 'Phoenix Marketcity Charger',
+                    location: 'Viman Nagar, Pune',
+                    latitude: 18.5626,
+                    longitude: 73.9168,
+                    status: 'Busy',
+                    image_url: 'https://images.unsplash.com/photo-1620803506177-3e6c38217bb4?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80'
+                },
+            ];
+            setStations(mockStations);
+            setSelectedStation(mockStations[0]);
+
+            setAllChargers([
+                { id: 101, stationId: 1, ocppId: 'CHG-1', chargerType: 'DC', occupied: false, availability: true, rate: 120 },
+                { id: 102, stationId: 1, ocppId: 'CHG-2', chargerType: 'AC', occupied: false, availability: true, rate: 22 },
+                { id: 103, stationId: 1, ocppId: 'CHG-3', chargerType: 'DC', occupied: true, availability: true, rate: 60 },
+            ]);
+        } finally {
+            setIsLoading(false);
+        }
     };
+
+    const handleStationPress = (station) => {
+        setSelectedStation(station);
+        setRegion({
+            latitude: Number(station.latitude),
+            longitude: Number(station.longitude),
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+        });
+    };
+
+    const handleCardPress = () => {
+        setIsSheetVisible(true);
+    };
+
+    const handleCloseBottomSheet = () => {
+        setIsSheetVisible(false);
+    };
+
+    const handleSelectCharger = (charger) => {
+        setIsSheetVisible(false);
+
+        // Determine connector fallback
+        const typeStr = (charger.chargerType || charger.type || '').toString().toUpperCase();
+        const isAC = typeStr.includes('AC');
+        const fallbackConnector = isAC ? 'Type 2' : 'CCS 2';
+
+        navigation.navigate('Config', {
+            stationId: selectedStation?.id,
+            stationName: selectedStation?.name,
+            chargerId: charger.ocppId || charger.charger_id || charger.id || 'Unknown',
+            chargerType: charger.chargerType || charger.type || 'Fast',
+            maxPower: charger.max_power || charger.rate || 'Unknown',
+            connectorType: charger.connectorType || charger.connector_type || fallbackConnector,
+            status: (charger.status === 'Available' || (!charger.occupied && charger.availability)) ? 'Available' : (charger.status || 'Busy')
+        });
+    };
+
+    const handleDirections = () => {
+        if (!selectedStation) return;
+        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+        const latLng = `${selectedStation.latitude},${selectedStation.longitude}`;
+        const label = selectedStation.name;
+        const url = Platform.select({
+            ios: `${scheme}${label}@${latLng}`,
+            android: `${scheme}${latLng}(${label})`
+        });
+        Linking.openURL(url);
+    };
+
+    const handleShare = async () => {
+        try {
+            await Share.share({
+                message: `Check out this charging station: ${selectedStation?.name || 'Bentork Station'}`,
+            });
+        } catch (error) {
+            Alert.alert(error.message);
+        }
+    };
+
     return (
         <View style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor="#fff" />
@@ -41,25 +215,24 @@ export default function HomeScreen() {
             {currentTab === 'Home' && (
                 <MapView
                     style={styles.map}
-                    initialRegion={region}
-                    mapType={Platform.OS === 'android' ? 'none' : 'standard'} // Use 'none' for tiles on Android
+                    region={region}
+                    mapType={Platform.OS === 'android' ? 'none' : 'standard'}
                     rotateEnabled={false}
+                    onRegionChangeComplete={setRegion}
                 >
-                    {/* Use CartoDB Dark Matter tiles for dark theme without API Key */}
-                    <UrlTile
-                        urlTemplate="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-                        maximumZ={19}
-                        flipY={false}
-                    />
-
-                    {markers.map(marker => (
+                    {stations.map((station, index) => (
                         <Marker
-                            key={marker.id}
-                            coordinate={{ latitude: marker.lat, longitude: marker.lng }}
-                            pinColor="#4CAF50" // Green
+                            key={`${station.id}_${index}`}
+                            coordinate={{ latitude: Number(station.latitude), longitude: Number(station.longitude) }}
+                            onPress={() => handleStationPress(station)}
+                            zIndex={selectedStation?.id === station.id ? 10 : 1}
                         >
                             <View style={styles.customMarker}>
-                                <MapPin size={24} color="#4CAF50" fill="#4CAF50" />
+                                <MapPin
+                                    size={selectedStation?.id === station.id ? 32 : 24}
+                                    color={selectedStation?.id === station.id ? "#00E5FF" : "#4CAF50"}
+                                    fill={selectedStation?.id === station.id ? "#00E5FF" : "#4CAF50"}
+                                />
                                 <View style={styles.markerDot} />
                             </View>
                         </Marker>
@@ -71,16 +244,16 @@ export default function HomeScreen() {
             <SafeAreaView style={styles.headerContainer} edges={['top']}>
                 <View style={styles.headerContent}>
                     <Image
-                        source={require('../assets/images/logo_inverted.png')} // Assuming this exists, tint it black
+                        source={require('../assets/images/logo_inverted.png')}
                         style={styles.logo}
                         resizeMode="contain"
                         tintColor="#ffffffff"
                     />
                     <View style={styles.headerIcons}>
-                        <TouchableOpacity style={styles.iconBtn}>
+                        <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Wallet')}>
                             <Wallet color="#ffffffff" size={18} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.iconBtn}>
+                        <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Notification')}>
                             <Bell color="#ffffffff" size={18} />
                             <View style={styles.badge}>
                                 <Text style={styles.badgeText}>7</Text>
@@ -90,8 +263,6 @@ export default function HomeScreen() {
                 </View>
             </SafeAreaView>
 
-
-
             {/* Floating Controls */}
             {currentTab === 'Home' && (
                 <>
@@ -99,7 +270,7 @@ export default function HomeScreen() {
                         <Search color="#fff" size={24} />
                     </TouchableOpacity>
 
-                    <View style={styles.zoomControls}>
+                    <View style={[styles.zoomControls, { bottom: selectedStation ? 340 : 120 }]}>
                         <TouchableOpacity style={styles.zoomBtn}>
                             <Plus color="#000" size={24} />
                         </TouchableOpacity>
@@ -109,70 +280,72 @@ export default function HomeScreen() {
                         </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity style={styles.helpButton}>
+                    <TouchableOpacity style={[styles.helpButton, { bottom: selectedStation ? 340 : 120 }]}>
                         <HelpCircle color="#fff" size={28} />
                     </TouchableOpacity>
 
-                    {/* Station Card */}
-                    <View style={styles.cardContainer}>
-                        <View style={styles.cardContentRow}>
-                            <View style={styles.leftColumn}>
-
-                                <Text style={styles.stationName}>Bentork Charging Station</Text>
-                                <View style={styles.ratingRow}>
-                                    <Text style={styles.ratingText}>4.3</Text>
-                                    <StarRating rating={4.3} />
-                                </View>
-                                <Text style={styles.addressText}>
-                                    City Center, 15 & 15A, Connaught Rd, near Lemon Tree Premier Hotel, Modi Colony, Pune, Maharashtra 411001
-                                </Text>
-                                <Text style={styles.statusText}>Available</Text>
-
-                                <View style={styles.connectorRow}>
-                                    <View style={styles.connectorItem}>
-                                        <Zap size={14} color="#00E5FF" />
-                                        <Text style={styles.connectorText}> CCS • 60kW</Text>
-                                        <Text style={styles.totalText}>Total 2</Text>
+                    {/* Station Card - Dynamic & Pressable */}
+                    {selectedStation && (
+                        <TouchableOpacity
+                            style={styles.cardContainer}
+                            activeOpacity={0.9}
+                            onPress={handleCardPress}
+                        >
+                            <View style={styles.cardContentRow}>
+                                <View style={styles.leftColumn}>
+                                    <Text style={styles.stationName}>{selectedStation.name}</Text>
+                                    <View style={styles.ratingRow}>
+                                        <Text style={styles.ratingText}>4.3</Text>
+                                        <StarRating rating={4.3} />
                                     </View>
-                                    <View style={styles.connectorItem}>
-                                        <Zap size={14} color="#00E5FF" />
-                                        <Text style={styles.connectorText}> Type 2 • 15kW</Text>
-                                        <Text style={styles.totalText}>Total 2</Text>
+                                    <Text style={styles.addressText} numberOfLines={2}>
+                                        {selectedStation.location}
+                                    </Text>
+                                    <Text style={[styles.statusText, { color: allChargers.filter(c => c.stationId === selectedStation.id && (c.status === 'Available' || (!c.occupied && c.availability))).length > 0 ? '#00E676' : '#FF4213' }]}>
+                                        {allChargers.filter(c => c.stationId === selectedStation.id && (c.status === 'Available' || (!c.occupied && c.availability))).length} Chargers Available
+                                    </Text>
+                                </View>
+
+                                <View style={styles.rightColumn}>
+                                    <View style={styles.imageContainer}>
+                                        <Image
+                                            source={{ uri: selectedStation.image_url || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7' }}
+                                            style={styles.stationImage}
+                                        />
+                                        <View style={styles.imageOverlay} />
+                                    </View>
+
+                                    <View style={styles.cardActions}>
+                                        <TouchableOpacity style={styles.actionBtn} onPress={handleDirections}>
+                                            <View style={styles.actionIconCircle}>
+                                                <Navigation color="#000" size={24} />
+                                            </View>
+                                            <Text style={styles.actionText}>Go</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={styles.actionBtn} onPress={handleShare}>
+                                            <View style={styles.actionIconCircle}>
+                                                <Share2 color="#000" size={24} />
+                                            </View>
+                                            <Text style={styles.actionText}>Share</Text>
+                                        </TouchableOpacity>
                                     </View>
                                 </View>
                             </View>
+                        </TouchableOpacity>
+                    )}
 
-                            <View style={styles.rightColumn}>
-                                <View style={styles.imageContainer}>
-                                    <Image
-                                        source={{ uri: 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80' }}
-                                        style={styles.stationImage}
-                                    />
-                                    <View style={styles.imageOverlay} />
-                                </View>
-
-                                <View style={styles.cardActions}>
-                                    <TouchableOpacity style={styles.actionBtn}>
-                                        <View style={styles.actionIconCircle}>
-                                            <Navigation color="#000" size={24} />
-                                        </View>
-                                        <Text style={styles.actionText}>Directions</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity style={styles.actionBtn}>
-                                        <View style={styles.actionIconCircle}>
-                                            <Share2 color="#000" size={24} />
-                                        </View>
-                                        <Text style={styles.actionText}>Share</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-                        </View>
-                    </View>
+                    <StationBottomSheet
+                        station={selectedStation}
+                        chargers={allChargers}
+                        visible={isSheetVisible}
+                        onClose={handleCloseBottomSheet}
+                        onSelectCharger={handleSelectCharger}
+                    />
                 </>
             )}
 
             {/* Library Screen */}
-            {currentTab === 'Library' && <LibraryScreen />}
+            {currentTab === 'Library' && <LibraryScreen navigation={navigation} />}
 
             {/* Bottom Nav */}
             <View style={styles.bottomNav}>
@@ -183,7 +356,10 @@ export default function HomeScreen() {
                     <Text style={currentTab === 'Home' ? styles.navTextActive : styles.navText}>Home</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.centerNavBtnContainer}>
+                <TouchableOpacity
+                    style={styles.centerNavBtnContainer}
+                    onPress={() => navigation.navigate('Config')}
+                >
                     <View style={styles.centerNavBtn}>
                         <Zap color="#000" size={32} fill="#000" />
                     </View>
@@ -196,6 +372,12 @@ export default function HomeScreen() {
                     <Text style={currentTab === 'Library' ? styles.navTextActive : styles.navText}>Library</Text>
                 </TouchableOpacity>
             </View>
+
+            {isLoading && (
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }]}>
+                    <ActivityIndicator size="large" color="#00E5FF" />
+                </View>
+            )}
 
         </View>
     );
@@ -210,7 +392,7 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
     },
     headerContainer: {
-        backgroundColor: 'rgba(33, 33, 33, 0.9)', // Matte black with transparency
+        backgroundColor: 'rgba(33, 33, 33, 0.9)',
         borderBottomLeftRadius: 20,
         borderBottomRightRadius: 20,
         paddingHorizontal: 20,
@@ -259,7 +441,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 100,
         right: 20,
-        backgroundColor: '#212121', // Dark grey/black
+        backgroundColor: '#212121',
         width: 50,
         height: 50,
         borderRadius: 25,
@@ -269,7 +451,7 @@ const styles = StyleSheet.create({
     },
     zoomControls: {
         position: 'absolute',
-        bottom: 380, // Adjust based on screen height
+        bottom: 380,
         left: 20,
         backgroundColor: '#fff',
         borderRadius: 25,
@@ -309,11 +491,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         position: 'absolute',
         top: 8,
+        display: 'none',
     },
     // Station Card
     cardContainer: {
         position: 'absolute',
-        bottom: 100, // Above nav bar
+        bottom: 100,
         left: 15,
         right: 15,
         backgroundColor: '#1E1E1E',
@@ -322,6 +505,7 @@ const styles = StyleSheet.create({
         elevation: 10,
         borderWidth: 1,
         borderColor: '#333',
+        zIndex: 10,
     },
     cardContentRow: {
         flexDirection: 'row',
@@ -358,7 +542,7 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     statusText: {
-        color: '#00E676', // Green
+        color: '#00E676',
         fontWeight: 'bold',
         marginBottom: 10,
     },
@@ -428,7 +612,7 @@ const styles = StyleSheet.create({
         height: 80,
         flexDirection: 'row',
         justifyContent: 'space-around',
-        alignItems: 'flex-start', // Top align to handle the floating btn
+        alignItems: 'flex-start',
         paddingTop: 15,
         borderTopWidth: 1,
         borderTopColor: '#333',
@@ -455,7 +639,7 @@ const styles = StyleSheet.create({
         marginTop: 5,
     },
     centerNavBtnContainer: {
-        top: -30, // Move up
+        top: -30,
         alignItems: 'center',
     },
     centerNavBtn: {

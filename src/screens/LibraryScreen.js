@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, Wallet, Clock, Settings, HelpCircle, MessageCircle, Info, User } from 'lucide-react-native';
+import { authService } from '../services/auth';
 
 const MenuItem = ({ icon: Icon, title, onPress }) => (
     <TouchableOpacity style={styles.menuItem} onPress={onPress}>
@@ -13,11 +14,18 @@ const MenuItem = ({ icon: Icon, title, onPress }) => (
     </TouchableOpacity>
 );
 
-export default function LibraryScreen() {
-    // We don't need SafeAreaView here if the Header provides the top spacing, 
-    // but the HomeScreen Header is not sticky/absolute? It is in the flow.
-    // So this component will just render below the header.
-    // We need padding bottom to avoid the absolute bottom nav.
+export default function LibraryScreen({ navigation }) {
+    const [user, setUser] = useState(null);
+
+    useEffect(() => {
+        loadUser();
+    }, []);
+
+    const loadUser = async () => {
+        const userData = await authService.getUser();
+        console.log("LibraryScreen: Loaded user", userData);
+        setUser(userData);
+    };
 
     return (
         <ScrollView
@@ -26,30 +34,34 @@ export default function LibraryScreen() {
             showsVerticalScrollIndicator={false}
         >
             {/* User Profile Card */}
-            <View style={styles.profileCard}>
+            <TouchableOpacity style={styles.profileCard} onPress={() => navigation.navigate('Accounts')}>
                 <View style={styles.userInfoRow}>
                     <View style={styles.avatarContainer}>
-                        {/* Placeholder for Avatar if no image */}
-                        <User size={40} color="#fff" />
+                        {user?.imageUrl ? (
+                            <Image
+                                source={{ uri: user.imageUrl }}
+                                style={styles.avatarImage}
+                            />
+                        ) : (
+                            <User size={40} color="#fff" />
+                        )}
                     </View>
                     <View style={styles.userDetails}>
-                        <Text style={styles.userName}>User name</Text>
-                        <Text style={styles.balanceLabel}>Current Balance</Text>
+                        <Text style={styles.userName}>{user?.name || 'User Name'}</Text>
+                        <Text style={styles.balanceLabel}>{user?.email || 'user@example.com'}</Text>
                     </View>
-                    <TouchableOpacity style={styles.viewBalanceBtn}>
-                        <Text style={styles.viewBalanceText}>View Balance</Text>
-                    </TouchableOpacity>
+                    <ChevronRight size={20} color="#666" />
                 </View>
-            </View>
+            </TouchableOpacity>
 
             {/* Menu Items */}
             <View style={styles.menuContainer}>
-                <MenuItem icon={Wallet} title="Wallet" onPress={() => { }} />
+                <MenuItem icon={Wallet} title="Wallet" onPress={() => navigation.navigate('Wallet')} />
                 <MenuItem icon={Clock} title="Charging History" onPress={() => { }} />
                 <MenuItem icon={Settings} title="Settings" onPress={() => { }} />
-                <MenuItem icon={HelpCircle} title="FAQs" onPress={() => { }} />
+                <MenuItem icon={HelpCircle} title="FAQs" onPress={() => navigation.navigate('FAQ')} />
                 <MenuItem icon={MessageCircle} title="Contact Us" onPress={() => { }} />
-                <MenuItem icon={Info} title="About" onPress={() => { }} />
+                <MenuItem icon={Info} title="About" onPress={() => navigation.navigate('About')} />
             </View>
         </ScrollView>
     );
@@ -85,8 +97,13 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 15,
-        borderWidth: 2,
+        borderWidth: 0.5,
         borderColor: '#fff',
+        overflow: 'hidden', // Ensure image is clipped to round border
+    },
+    avatarImage: {
+        width: '100%',
+        height: '100%',
     },
     userDetails: {
         flex: 1,
