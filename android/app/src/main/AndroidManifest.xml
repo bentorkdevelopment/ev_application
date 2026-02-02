@@ -28,8 +28,7 @@
     </activity>
     <meta-data
       android:name="com.google.android.geo.API_KEY"
-      android:value="AIzaSyAJxufGIZROTZzmjgjNSbADMRYS_nveo_Y" />
-    <!-- Personal MAP-API: AIzaSyBRu2A5mduIS_j5pchuglaAR-guV4XSnB4 -->
+      android:value="${MY_SECRET_KEY_PLACEHOLDER}" />
 
     <uses-library android:name="org.apache.http.legacy" android:required="false" />
   </application>
