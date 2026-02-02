@@ -9,10 +9,27 @@ export default function LoginScreen({ navigation }) {
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
-        // You usually need to configure Google Sign-In with your webClientId
+        // Clear any stale session data on mount to ensure a fresh login attempt
+        const clearSession = async () => {
+            console.log("Clearing old session data...");
+            await authService.logout();
+        };
+        clearSession();
+
+        const clientId = GOOGLE_WEB_CLIENT_ID;
+        console.log("Configuring Google Sign-In...");
+        if (!clientId || clientId.length < 10) {
+            console.error("CRITICAL: GOOGLE_WEB_CLIENT_ID is missing or invalid in .env!");
+            Alert.alert("Configuration Error", "Google Client ID is missing. Please restart the app with a valid environment.");
+        } else {
+            console.log("Using Web Client ID:", clientId.substring(0, 15) + "...");
+        }
+
         GoogleSignin.configure({
-            webClientId: GOOGLE_WEB_CLIENT_ID, // Get this from Firebase Console or Google Cloud Console
+            webClientId: clientId,
             offlineAccess: true,
+            scopes: ['email', 'profile'],
+            forceCodeForRefreshToken: true, // often helps with token issues
         });
     }, []);
 
@@ -22,23 +39,23 @@ export default function LoginScreen({ navigation }) {
             const userInfo = await GoogleSignin.signIn();
 
             // Handle the successful login
-            if (userInfo.data && userInfo.data.user) {
-                handleBackendLogin(userInfo.data.user.email);
-            } else if (userInfo.user) {
-                // Older versions might return user directly
-                handleBackendLogin(userInfo.user.email);
+            const userEmail = userInfo?.data?.user?.email || userInfo?.user?.email;
+
+            if (userEmail) {
+                handleBackendLogin(userEmail.trim());
+            } else {
+                Alert.alert("Login Error", "Could not retrieve email from Google Account.");
             }
 
         } catch (error) {
+            // ... (keep existing error handling)
             if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-                // user cancelled the login flow
+                console.log("User cancelled login");
             } else if (error.code === statusCodes.IN_PROGRESS) {
-                // operation (e.g. sign in) is in progress already
+                console.log("Login in progress");
             } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-                // play services not available or outdated
                 Alert.alert("Error", "Google Play Services not available");
             } else {
-                // some other error happened
                 console.error(error);
                 Alert.alert("Error", "Login failed. Please try again.");
             }
@@ -50,12 +67,16 @@ export default function LoginScreen({ navigation }) {
         setLoading(true);
         try {
             // Call backend to validate/get token
-            console.log("Sending request to:", authApi.googleLoginSuccess); // Log function
+            console.log("Sending request to:", authApi.googleLoginSuccess);
             const response = await authApi.googleLoginSuccess(email);
             console.log("Backend response:", response);
 
             // Response structure from backend: { token, name, email, imageUrl } based on valid endpoint read
             if (response && response.token) {
+                // 1. Clear any potential residual data first
+                await authService.logout();
+
+                // 2. Set new Token and User
                 await authService.setToken(response.token);
                 await authService.setUser({
                     name: response.name,
@@ -63,8 +84,23 @@ export default function LoginScreen({ navigation }) {
                     imageUrl: response.imageUrl
                 });
 
-                // Navigate to Home
-                navigation.replace('Home');
+                // 3. Verify token is saved
+                const savedToken = await authService.getToken();
+                console.log("Token saved verification:", savedToken ? "Success" : "Failed");
+
+                if (!savedToken) {
+                    Alert.alert("Login Error", "Failed to save session. Please try again.");
+                    return;
+                }
+
+                // 4. Reset navigation stack to Home
+                // Using a small timeout to ensure AsyncStorage has settled (optional but safe)
+                setTimeout(() => {
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'Home' }],
+                    });
+                }, 100);
             } else {
                 console.warn("No token in response");
                 Alert.alert("Login Failed", "No token received from server.");

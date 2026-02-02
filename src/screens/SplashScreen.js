@@ -13,6 +13,7 @@ const PATH_DARK = "M44.7,-76.4C58.9,-69.2,71.8,-59.1,81.6,-46.6C91.4,-34.1,98.1,
 const PATH_GREEN = "M41.3,-72.6C53.4,-65.3,63.2,-54.6,70.4,-42.1C77.6,-29.6,82.2,-15.3,81.3,-1.4C80.4,12.5,74,26,64.8,37.3C55.6,48.6,43.6,57.7,30.8,63.2C18,68.7,4.4,70.6,-8.3,69.7C-21,68.8,-32.8,65.1,-43.2,58.3C-53.6,51.5,-62.6,41.6,-68.9,30.1C-75.2,18.6,-78.8,5.5,-75.9,-6.2C-73,-17.9,-63.6,-28.2,-53.4,-36.5C-43.2,-44.8,-32.2,-51.1,-20.9,-58.5C-9.6,-65.9,2,-74.4,14.5,-76.6C27,-78.8,40.4,-74.7,41.3,-72.6Z"
 const PATH_LIGHT = "M35.6,-62.3C46.5,-55.8,55.9,-47.5,63.1,-37.2C70.3,-26.9,75.3,-14.6,74.7,-2.6C74.1,9.4,67.9,21.1,60.1,31.8C52.3,42.5,42.9,52.2,31.7,58.5C20.5,64.8,7.5,67.7,-4.8,67.3C-17.1,66.9,-32.7,63.2,-45.3,55.8C-57.9,48.4,-67.5,37.3,-72.8,24.6C-78.1,11.9,-79.1,-2.4,-75.3,-15.8C-71.5,-29.2,-62.9,-41.7,-51.5,-49.6C-40.1,-57.5,-25.9,-60.8,-11.8,-62.8C2.3,-64.8,16.4,-65.5,29.3,-62.9C42.2,-60.3,54,-54.4,35.6,-62.3Z"
 
+
 // Separate component for each Blob Layer to optimize rendering
 // We rotate the wrapping VIEW, not the SVG path, for native-driver performance.
 const BlobLayer = ({ path, color, direction = 1, scaleRange = [1, 1.2], opacity = 0.6, duration }) => {
@@ -76,6 +77,7 @@ const BlobLayer = ({ path, color, direction = 1, scaleRange = [1, 1.2], opacity 
                     />
                 </G>
             </Svg>
+
         </Animated.View>
     )
 }
@@ -135,7 +137,7 @@ export default function SplashScreen({ navigation } = {}) {
                     color="#082f20"
                     duration={20000}
                     direction={1}
-                    scaleRange={[1.4, 1.5]}
+                    scaleRange={[1.0, 1.0]}
                     opacity={0.9}
                 />
 
@@ -149,15 +151,6 @@ export default function SplashScreen({ navigation } = {}) {
                     opacity={0.7}
                 />
 
-                {/* Layer 3: Light (Fast, Pulse) */}
-                <BlobLayer
-                    path={PATH_LIGHT}
-                    color="#80e8b1"
-                    duration={12000}
-                    direction={1}
-                    scaleRange={[0.8, 1.0]}
-                    opacity={0.5}
-                />
             </Animated.View>
 
             <View style={styles.contentContainer}>
@@ -191,8 +184,8 @@ const styles = StyleSheet.create({
     blobContainer: {
         position: 'absolute',
         // Bottom Right positioning
-        bottom: -height * 0.4,
-        right: -height * 0.4,
+        bottom: -height * 0.8,
+        right: -height * 0.8,
         width: BLOB_SIZE,
         height: BLOB_SIZE, // Square container
         zIndex: 1,
