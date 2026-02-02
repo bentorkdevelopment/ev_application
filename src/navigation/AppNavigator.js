@@ -14,6 +14,7 @@ import AboutScreen from '../screens/AboutScreen'
 import FAQScreen from '../screens/FAQScreen'
 import NotificationScreen from '../screens/NotificationScreen'
 import MapScreen from '../screens/MapScreen'
+import QRScannerScreen from '../screens/QRScannerScreen'
 
 const Stack = createStackNavigator()
 
@@ -32,6 +33,7 @@ export default function AppNavigator() {
                 <Stack.Screen name="FAQ" component={FAQScreen} />
                 <Stack.Screen name="Notification" component={NotificationScreen} />
                 <Stack.Screen name="Map" component={MapScreen} />
+                <Stack.Screen name="QRScanner" component={QRScannerScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     )

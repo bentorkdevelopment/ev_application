@@ -28,6 +28,9 @@
     </activity>
     <meta-data
       android:name="com.google.android.geo.API_KEY"
-      android:value="YOUR_GOOGLE_MAPS_API_KEY_HERE" />
+      android:value="AIzaSyAJxufGIZROTZzmjgjNSbADMRYS_nveo_Y" />
+    <!-- Personal MAP-API: AIzaSyBRu2A5mduIS_j5pchuglaAR-guV4XSnB4 -->
+
+    <uses-library android:name="org.apache.http.legacy" android:required="false" />
   </application>
 </manifest>
