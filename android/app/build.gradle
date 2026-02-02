@@ -73,6 +73,14 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localProperties.load(new FileInputStream(localPropertiesFile))
+}
+// Get the key or use a fallback empty string
+def mySecretKey = localProperties.getProperty('MY_SECRET_KEY') ?: ""
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -86,6 +94,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // This injects the variable into your Manifest
+        manifestPlaceholders = [MY_SECRET_KEY_PLACEHOLDER: mySecretKey]
     }
     signingConfigs {
         debug {
