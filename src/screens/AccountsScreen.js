@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, User, LogOut, Bell, Shield, Smartphone } from 'lucide-react-native';
+import { ChevronLeft, User, LogOut, Bell, Shield, Smartphone, Code } from 'lucide-react-native';
 import { authService } from '../services/auth';
 
 export default function AccountsScreen({ navigation }) {
@@ -103,6 +103,8 @@ export default function AccountsScreen({ navigation }) {
                         <SettingItem icon={Smartphone} title="Device Preferences" subtitle="Theme, Language" onPress={() => { }} />
                     </View>
                 </View>
+
+
 
                 {/* Logout Button */}
                 <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>

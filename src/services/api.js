@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { DeviceEventEmitter } from 'react-native';
 import { authService } from './auth';
 
 import { API_URL } from '@env';
@@ -55,6 +56,7 @@ const handleApiError = (error) => {
                     break;
                 case 401:
                     userMessage = 'Session expired. Please login again.';
+                    DeviceEventEmitter.emit('auth_session_expired');
                     break;
                 case 403:
                     userMessage = 'You do not have permission to perform this action.';
@@ -273,6 +275,121 @@ export const razorpayApi = {
             return response.data;
         } catch (error) {
             throw error;
+        }
+    }
+};
+
+export const sessionApi = {
+    startSession: async (sessionData) => {
+        try {
+            const response = await api.post('/sessions/start', sessionData);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    stopSession: async (sessionId) => {
+        try {
+            const response = await api.post('/sessions/stop', { sessionId });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getSessionEnergy: async (sessionId) => {
+        try {
+            const response = await api.get(`/sessions/${sessionId}/energy`);
+            const data = response.data;
+            let energyUsed = 0;
+
+            if (typeof data === 'number') {
+                energyUsed = data;
+            } else if (typeof data === 'object' && data !== null) {
+                // Check various common field names
+                energyUsed = data.kwhUsed ?? data.energy ?? data.energyUsed ?? data.kwh ?? 0;
+            }
+            return Number(energyUsed) || 0;
+        } catch (error) {
+            console.warn("Get Energy Failed:", error.message);
+            // Don't throw, just return 0 to avoid UI freeze, logic will retry
+            return 0;
+        }
+    },
+    getSessionStatus: async (sessionId) => {
+        try {
+            const response = await api.get(`/sessions/${sessionId}/status`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getActiveSession: async (userId) => {
+        try {
+            // Since /sessions/active returns count, we use /all/records to find the actual session
+            const response = await api.get('/sessions/all/records');
+            const data = response.data;
+            const sessions = Array.isArray(data) ? data : (data?.data || []);
+
+            if (Array.isArray(sessions)) {
+                // Find all ACTIVE sessions for this user
+                const activeSessions = sessions.filter(s => {
+                    const matchesUser = (s.user?.id == userId || s.userId == userId);
+                    const status = String(s.status || '').toUpperCase();
+                    // STRICTER STATUS CHECK: Only truly active states to avoid stale 'INITIATED' ghosts
+                    const isActive = ['ACTIVE', 'CHARGING'].includes(status);
+
+                    // Reject sessions with invalid start times (prevents 1970 duration bug)
+                    const hasValidTime = s.startTime && s.startTime !== 0; // null, undefined, or 0 are invalid
+
+                    return matchesUser && isActive && hasValidTime;
+                });
+
+                // Sort by ID descending to get the LATEST session
+                activeSessions.sort((a, b) => b.id - a.id);
+
+                const activeSession = activeSessions[0];
+
+                if (activeSession) {
+                    console.log("Found Active Session for User", userId, ":", activeSession.id);
+                    return {
+                        sessionId: activeSession.id,
+                        status: 'ACTIVE', // Normalized for frontend check
+                        chargerId: activeSession.charger?.id || activeSession.chargerId,
+                        boxId: activeSession.boxId,
+                        stationName: activeSession.charger?.station?.name || activeSession.stationName || "Unknown Station",
+                        startTime: activeSession.startTime,
+                        // Fix for Percentage Logic on Resume:
+                        selectedKwh: activeSession.selectedKwh || activeSession.targetEnergy || activeSession.energyLimit || null,
+                        planId: activeSession.planId || activeSession.plan?.id || null,
+                        rate: activeSession.charger?.rate || 0,
+                        chargerType: activeSession.charger?.chargerType || 'Fast'
+                    };
+                }
+            }
+            return null;
+        } catch (error) {
+            console.warn("Failed to check active session:", error);
+            return null;
+        }
+    },
+    enableNotification: async (sessionId, enabled) => {
+        try {
+            const response = await api.post('/sessions/notify', { sessionId, enabled });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const notificationApi = {
+    getUnreadCount: async (userId) => {
+        try {
+            const response = await api.get(`/notifications/unread-count/${userId}`);
+            return response.data; // Expecting { count: 5 } or just number
+        } catch (error) {
+            // console.warn("Notification Count Error", error); // Suppress log spam
+            return 0; // Fallback
         }
     }
 };

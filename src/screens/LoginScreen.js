@@ -5,7 +5,7 @@ import { authService } from '../services/auth';
 import { authApi } from '../services/api';
 import { GOOGLE_WEB_CLIENT_ID } from '@env';
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, route }) {
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
@@ -93,14 +93,23 @@ export default function LoginScreen({ navigation }) {
                     return;
                 }
 
-                // 4. Reset navigation stack to Home
-                // Using a small timeout to ensure AsyncStorage has settled (optional but safe)
-                setTimeout(() => {
-                    navigation.reset({
-                        index: 0,
-                        routes: [{ name: 'Home' }],
-                    });
-                }, 100);
+                // 4. Check for redirect target (e.g. from Deep Link)
+                const { postLoginTarget, postLoginParams } = route.params || {};
+
+                if (postLoginTarget) {
+                    console.log(`Redirecting to ${postLoginTarget} after login...`);
+                    // Use replace to avoid going back to login
+                    navigation.replace(postLoginTarget, postLoginParams);
+                } else {
+                    // Reset navigation stack to Home
+                    // Using a small timeout to ensure AsyncStorage has settled (optional but safe)
+                    setTimeout(() => {
+                        navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'Home' }],
+                        });
+                    }, 100);
+                }
             } else {
                 console.warn("No token in response");
                 Alert.alert("Login Failed", "No token received from server.");
@@ -142,6 +151,13 @@ export default function LoginScreen({ navigation }) {
             <Text style={styles.title}>Welcome Back</Text>
             <Text style={styles.subtitle}>Sign in to continue</Text>
 
+            <TouchableOpacity
+                style={styles.forgotPassBtn}
+                onPress={() => navigation.navigate('ResetPassword')}
+            >
+                <Text style={styles.forgotPassText}>Forgot Password?</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={testConnection} style={{ padding: 10, marginBottom: 20 }}>
                 <Text style={{ color: '#555' }}>Tap to Test Connection (Check Logs)</Text>
             </TouchableOpacity>
@@ -151,15 +167,30 @@ export default function LoginScreen({ navigation }) {
             {loading ? (
                 <ActivityIndicator size="large" color="#4CAF50" />
             ) : (
-                <TouchableOpacity style={styles.googleButton} onPress={signIn}>
-                    {/* Google Icon/Text */}
-                    <Image
-                        source={{ uri: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/768px-Google_%22G%22_logo.svg.png' }}
-                        style={styles.googleIcon}
-                    />
-                    <Text style={styles.googleButtonText}>Sign in with Google</Text>
-                </TouchableOpacity>
+                <View style={{ width: '100%', alignItems: 'center' }}>
+
+                    {/* OTP Login Button */}
+                    <TouchableOpacity style={styles.otpButton} onPress={() => navigation.navigate('OtpLogin')}>
+                        <Text style={styles.otpButtonText}>Login with Phone</Text>
+                    </TouchableOpacity>
+
+                    {/* Google Button */}
+                    <TouchableOpacity style={styles.googleButton} onPress={signIn}>
+                        <Image
+                            source={{ uri: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/768px-Google_%22G%22_logo.svg.png' }}
+                            style={styles.googleIcon}
+                        />
+                        <Text style={styles.googleButtonText}>Sign in with Google</Text>
+                    </TouchableOpacity>
+                </View>
             )}
+
+            <View style={styles.footerLinkContainer}>
+                <Text style={styles.footerLinkText}>Don't have an account? </Text>
+                <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+                    <Text style={styles.footerLinkHighlight}>Register</Text>
+                </TouchableOpacity>
+            </View>
         </View>
     );
 }
@@ -171,6 +202,20 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         padding: 20,
+    },
+    footerLinkContainer: {
+        flexDirection: 'row',
+        marginTop: 30,
+        alignItems: 'center',
+    },
+    footerLinkText: {
+        color: '#888',
+        fontSize: 15,
+    },
+    footerLinkHighlight: {
+        color: '#39E29B',
+        fontSize: 15,
+        fontWeight: 'bold',
     },
     logo: {
         width: 150,
@@ -187,7 +232,15 @@ const styles = StyleSheet.create({
     subtitle: {
         fontSize: 16,
         color: '#aaa',
-        marginBottom: 50,
+        marginBottom: 20,
+    },
+    forgotPassBtn: {
+        marginBottom: 30,
+    },
+    forgotPassText: {
+        color: '#39E29B',
+        fontSize: 14,
+        fontWeight: '600',
     },
     spacer: {
         height: 20,
@@ -209,6 +262,23 @@ const styles = StyleSheet.create({
     googleButtonText: {
         fontSize: 16,
         color: '#000',
+        fontWeight: 'bold',
+    },
+    otpButton: {
+        backgroundColor: '#333',
+        paddingVertical: 12,
+        paddingHorizontal: 30,
+        borderRadius: 30,
+        borderWidth: 1,
+        borderColor: '#555',
+        marginBottom: 15,
+        width: '100%',
+        maxWidth: 300, // align with google button visual
+        alignItems: 'center',
+    },
+    otpButtonText: {
+        fontSize: 16,
+        color: '#fff',
         fontWeight: 'bold',
     },
 });

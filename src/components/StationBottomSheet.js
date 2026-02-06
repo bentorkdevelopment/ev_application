@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Dimensions, Animated, TouchableOpacity, ScrollView, Image, PanResponder, Easing } from 'react-native';
-import { X, ChevronRight, Star, Zap, Clock } from 'lucide-react-native';
+import { View, Text, StyleSheet, Dimensions, Animated, TouchableOpacity, ScrollView, Image, PanResponder, Easing, Share, Linking, Platform, Alert } from 'react-native';
+import { X, ChevronRight, Star, Zap, Clock, Share2, Navigation, Bookmark, HelpCircle } from 'lucide-react-native';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const BOTTOM_SHEET_MAX_HEIGHT = SCREEN_HEIGHT * 0.75;
@@ -26,6 +26,33 @@ export default function StationBottomSheet({
     }, [station]);
 
     const activeStation = station || lastStation;
+
+    const handleDirections = () => {
+        if (!activeStation) return;
+        const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+        const latLng = `${activeStation.latitude},${activeStation.longitude}`;
+        const label = activeStation.name;
+        const url = Platform.select({
+            ios: `${scheme}${label}@${latLng}`,
+            android: `${scheme}${latLng}(${label})`
+        });
+        Linking.openURL(url);
+    };
+
+    const handleHelp = () => {
+        // Placeholder for help/support
+        console.log("Help pressed");
+    };
+
+    const handleShare = async () => {
+        try {
+            await Share.share({
+                message: `Check out this charging station: ${activeStation?.name || 'Bentork Station'} at ${activeStation?.location || 'Unknown Location'}`,
+            });
+        } catch (error) {
+            console.log("Share Error:", error.message);
+        }
+    };
 
     // Pan Responder for Drag Gesture
     const panResponder = useRef(
@@ -88,22 +115,6 @@ export default function StationBottomSheet({
 
     const stationChargers = activeStation && chargers ? chargers.filter(c => c.stationId === activeStation.id) : [];
 
-    if (!activeStation) {
-        // Render nothing but keep hooks valid by returning null HERE, 
-        // effectively same visual result but hooks ran.
-        // Actually, better to just return an empty fragment or view if we want to be safe,
-        // BUT strict mode says hooks must be called. 
-        // Since we are returning null AFTER all hooks are called, it should be fine?
-        // Wait, the error said "Should have a queue". This usually means hooks were called out of order or conditionally.
-        // The previous code had `if (!activeStation) return null;` AFTER hooks.
-        // Let's verify if `PanResponder.create` or strict mode is doing something weird.
-        // Ah, `panResponder` ref creation includes a callback that might be closing over context?
-        // No, the safest fix for "Likely calling hooks conditionally" is to ensure NO return happens before ALL hooks.
-        // The return WAS after hooks.
-        // However, maybe `activeStation` changes result in a different render path?
-        // Let's just wrap the entire return JSX in `activeStation ? ... : null` and remove the line 87 entirely.
-    }
-
     return (
         <>
             {activeStation && (
@@ -125,15 +136,18 @@ export default function StationBottomSheet({
                             styles.bottomSheet,
                             { transform: [{ translateY }] }
                         ]}
-                        {...panResponder.panHandlers}
                     >
                         {/* Header / Drag Handle */}
-                        <View style={styles.header}>
+                        <View style={styles.header} {...panResponder.panHandlers}>
                             <View style={styles.dragHandle} />
                         </View>
 
                         {/* Content */}
-                        <View style={styles.content}>
+                        <ScrollView
+                            style={styles.content}
+                            contentContainerStyle={{ paddingBottom: 0 }}
+                            showsVerticalScrollIndicator={false}
+                        >
                             <View style={styles.stationHeader}>
                                 <View style={styles.stationInfo}>
                                     <Text style={styles.stationName} numberOfLines={1}>{activeStation.name}</Text>
@@ -143,6 +157,23 @@ export default function StationBottomSheet({
                                         <Star fill="#FFD700" color="#FFD700" size={16} />
                                         <Text style={styles.ratingText}>{activeStation.rating || '4.5'}</Text>
                                         <Text style={styles.ratingCount}>({activeStation.reviews || '128'} Reviews)</Text>
+                                    </View>
+
+                                    <View style={styles.actionRow}>
+                                        <TouchableOpacity style={styles.actionChip} onPress={handleDirections}>
+                                            <Navigation size={16} color="#aaa" />
+                                            <Text style={styles.actionText}>Direction</Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity style={styles.actionChip} onPress={handleHelp}>
+                                            <HelpCircle size={16} color="#aaa" />
+                                            <Text style={styles.actionText}>Help</Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity style={styles.actionChip} onPress={handleShare}>
+                                            <Share2 size={16} color="#aaa" />
+                                            <Text style={styles.actionText}>Share</Text>
+                                        </TouchableOpacity>
                                     </View>
                                 </View>
                                 <Image
@@ -198,7 +229,7 @@ export default function StationBottomSheet({
                                     </View>
                                 )}
                             </View>
-                        </View>
+                        </ScrollView>
                     </Animated.View>
                 </>
             )}
@@ -210,24 +241,23 @@ const styles = StyleSheet.create({
     overlay: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: '#000',
-        zIndex: 90,
+        zIndex: 1000, // Increased zIndex slightly to be safe
     },
     bottomSheet: {
         position: 'absolute',
         left: 0,
         right: 0,
-        bottom: 0, // content dictates height
+        bottom: 0,
+        maxHeight: '90%', // Limit max height, allowing auto-adjust below this
         backgroundColor: '#1E1E1E',
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
-        zIndex: 100,
+        zIndex: 1001, // Stays above overlay
         elevation: 20,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: -5 },
         shadowOpacity: 0.3,
         shadowRadius: 10,
-        paddingBottom: 40, // Add padding for safe bottom space
-        maxHeight: '90%', // Prevent full screen takeover
     },
     header: {
         alignItems: 'center',
@@ -245,6 +275,7 @@ const styles = StyleSheet.create({
     },
     content: {
         // Removed flex: 1 to allow auto height
+        flexGrow: 0,
         paddingHorizontal: 20,
         paddingTop: 10,
     },
@@ -396,5 +427,25 @@ const styles = StyleSheet.create({
     emptyText: {
         color: '#777',
         fontStyle: 'italic',
+    },
+    actionRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 12,
+    },
+    actionChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#333',
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        borderRadius: 20,
+        gap: 4
+    },
+    actionText: {
+        color: '#ccc',
+        fontSize: 12,
+        fontWeight: '500'
     }
 });

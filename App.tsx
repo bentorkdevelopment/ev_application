@@ -3,6 +3,7 @@ import { StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import { requestUserPermission, getFCMToken, NotificationListener } from './src/services/fcmService';
+import { AlertProvider } from './src/context/AlertContext';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -22,7 +23,9 @@ function App() {
   return (
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppNavigator />
+      <AlertProvider>
+        <AppNavigator />
+      </AlertProvider>
     </SafeAreaProvider>
   );
 }
