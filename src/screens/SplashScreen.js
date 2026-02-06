@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react'
-import { View, Image, StyleSheet, Dimensions, Animated, Easing, StatusBar } from 'react-native'
+import { View, Image, StyleSheet, Dimensions, Animated, Easing, StatusBar, Platform, Linking } from 'react-native'
 import Svg, { Path, G } from 'react-native-svg'
 import { authService } from '../services/auth';
+import SpInAppUpdates, { IAUUpdateKind } from 'sp-react-native-in-app-updates';
 
 const { width, height } = Dimensions.get('window')
 
@@ -140,13 +141,73 @@ export default function SplashScreen({ navigation } = {}) {
         }).start()
 
         const checkAuth = async () => {
-            // Wait for 2 seconds minimal splash time (or however long the animation needs to feel good)
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Start the minimum splash timer
+            const minSplashTime = new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Check for In-App Updates (Android only for Immediate)
+            if (Platform.OS === 'android') {
+                try {
+                    const inAppUpdates = new SpInAppUpdates(false); // isDebug=false
+                    const result = await inAppUpdates.checkNeedsUpdate();
+
+                    if (result.shouldUpdate) {
+                        // Forces an immediate update. The Google Play UI will take over.
+                        // If the update is completed, the app will restart.
+                        await inAppUpdates.startUpdate({
+                            updateType: IAUUpdateKind.IMMEDIATE,
+                        });
+                        // If the user cancels the update, the code continues here.
+                        // To strictly enforce "no update missed", you could recursively call checkAuth() 
+                        // or BackHandler.exitApp(), but typically the Immediate flow is blocking enough.
+                    }
+                } catch (error) {
+                    console.log('In-App Update check failed:', error);
+                    // Fail silently and proceed to app if check fails (e.g. no network)
+                }
+            }
+
+            // Ensure we wait for the minimum splash time
+            await minSplashTime;
+
+            // Check for Deep Link
+            const initialUrl = await Linking.getInitialURL();
+            let deepLinkChargerId = null;
+
+            if (initialUrl) {
+                const parts = initialUrl.split('/splash/');
+                if (parts.length > 1) {
+                    let id = parts[1];
+                    // Clean up URL parameters, fragments, and trailing slashes
+                    id = id.split('?')[0].split('#')[0];
+                    if (id.endsWith('/')) {
+                        id = id.slice(0, -1);
+                    }
+                    if (id) deepLinkChargerId = id;
+                }
+            }
 
             const token = await authService.getToken();
 
             if (navigation) {
-                if (token) {
+                if (deepLinkChargerId) {
+                    const configParams = {
+                        chargerId: deepLinkChargerId,
+                        boxId: deepLinkChargerId,
+                        stationName: 'Bentork Charger',
+                        status: 'Available'
+                    };
+
+                    if (token) {
+                        // Navigate to ConfigScreen with extracted ID
+                        navigation.replace('Config', configParams);
+                    } else {
+                        // Not logged in: Go to Login, but pass the target
+                        navigation.replace('Login', {
+                            postLoginTarget: 'Config',
+                            postLoginParams: configParams
+                        });
+                    }
+                } else if (token) {
                     navigation.replace('Home');
                 } else {
                     navigation.replace('Login');
