@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronRight, Wallet, Clock, Settings, HelpCircle, MessageCircle, Info, User, Layout } from 'lucide-react-native';
+import { ChevronRight, Wallet, Clock, Settings, HelpCircle, MessageCircle, Info, User, Layout, FileText } from 'lucide-react-native';
 import { authService } from '../services/auth';
 
 const MenuItem = ({ icon: Icon, title, onPress }) => (
@@ -59,10 +59,11 @@ export default function LibraryScreen({ navigation }) {
             <View style={styles.menuContainer}>
                 <MenuItem icon={Wallet} title="Wallet" onPress={() => navigation.navigate('Wallet')} />
 
-                <MenuItem icon={Settings} title="Settings" onPress={() => { }} />
+                <MenuItem icon={Settings} title="Settings" onPress={() => navigation.navigate('Settings')} />
                 <MenuItem icon={HelpCircle} title="FAQs" onPress={() => navigation.navigate('FAQ')} />
                 <MenuItem icon={MessageCircle} title="Contact Us" onPress={() => { }} />
                 <MenuItem icon={Info} title="About" onPress={() => navigation.navigate('About')} />
+                <MenuItem icon={FileText} title="Terms & Conditions" onPress={() => navigation.navigate('Terms')} />
 
                 {/* Developer - Restricted */}
                 {user && (user.email?.toLowerCase().includes('om.lokhande34') || user.email?.toLowerCase().includes('jayeshmahajan340') || user.email?.toLowerCase().includes('sj020420')) && (

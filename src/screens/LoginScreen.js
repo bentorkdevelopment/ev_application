@@ -130,20 +130,10 @@ export default function LoginScreen({ navigation, route }) {
         }
     };
 
-    const testConnection = async () => {
-        console.log("Testing connection...");
-        try {
-            // Try fetching something public like plans (from demo)
-            await authApi.googleLoginSuccess('test_ping@gmail.com');
-        } catch (e) {
-            console.log("Test Connection Error:", e);
-        }
-    };
-
     return (
         <View style={styles.container}>
             <Image
-                source={require('../assets/images/logo_inverted.png')} // Reusing the logo
+                source={require('../assets/images/logo_inverted.png')}
                 style={styles.logo}
                 resizeMode="contain"
             />
@@ -157,33 +147,27 @@ export default function LoginScreen({ navigation, route }) {
             >
                 <Text style={styles.forgotPassText}>Forgot Password?</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity onPress={testConnection} style={{ padding: 10, marginBottom: 20 }}>
-                <Text style={{ color: '#555' }}>Tap to Test Connection (Check Logs)</Text>
-            </TouchableOpacity>
-
             <View style={styles.spacer} />
 
-            {loading ? (
-                <ActivityIndicator size="large" color="#4CAF50" />
-            ) : (
-                <View style={{ width: '100%', alignItems: 'center' }}>
+            {
+                loading ? (
+                    <ActivityIndicator size="large" color="#4CAF50" />
+                ) : (
+                    <View style={{ width: '100%', alignItems: 'center' }}>
 
-                    {/* OTP Login Button */}
-                    <TouchableOpacity style={styles.otpButton} onPress={() => navigation.navigate('OtpLogin')}>
-                        <Text style={styles.otpButtonText}>Login with Phone</Text>
-                    </TouchableOpacity>
 
-                    {/* Google Button */}
-                    <TouchableOpacity style={styles.googleButton} onPress={signIn}>
-                        <Image
-                            source={{ uri: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/768px-Google_%22G%22_logo.svg.png' }}
-                            style={styles.googleIcon}
-                        />
-                        <Text style={styles.googleButtonText}>Sign in with Google</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
+
+                        {/* Google Button */}
+                        <TouchableOpacity style={styles.googleButton} onPress={signIn}>
+                            <Image
+                                source={require('../assets/images/google_ic.webp')}
+                                style={styles.googleIcon}
+                            />
+                            <Text style={styles.googleButtonText}>Sign in with Google</Text>
+                        </TouchableOpacity>
+                    </View>
+                )
+            }
 
             <View style={styles.footerLinkContainer}>
                 <Text style={styles.footerLinkText}>Don't have an account? </Text>
@@ -191,7 +175,7 @@ export default function LoginScreen({ navigation, route }) {
                     <Text style={styles.footerLinkHighlight}>Register</Text>
                 </TouchableOpacity>
             </View>
-        </View>
+        </View >
     );
 }
 

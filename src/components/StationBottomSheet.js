@@ -151,7 +151,18 @@ export default function StationBottomSheet({
                             <View style={styles.stationHeader}>
                                 <View style={styles.stationInfo}>
                                     <Text style={styles.stationName} numberOfLines={1}>{activeStation.name}</Text>
-                                    <Text style={styles.stationAddress} numberOfLines={2}>{activeStation.location || activeStation.address}</Text>
+                                    <Text style={styles.stationAddress} numberOfLines={2}>
+                                        {activeStation.locationName || activeStation.location || activeStation.address || 'Unknown Location'}
+                                    </Text>
+
+                                    <View style={[styles.statusRow, { marginBottom: 8 }]}>
+                                        <View style={styles.statusPill}>
+                                            <Zap size={12} color={activeStation.status === 'ACTIVE' ? '#00E676' : '#FF4213'} fill={activeStation.status === 'ACTIVE' ? '#00E676' : '#FF4213'} />
+                                            <Text style={[styles.statusText, { color: activeStation.status === 'ACTIVE' ? '#00E676' : '#FF4213' }]}>
+                                                {activeStation.status === 'ACTIVE' ? 'Operational' : 'Non-Operational'}
+                                            </Text>
+                                        </View>
+                                    </View>
 
                                     <View style={styles.ratingRow}>
                                         <Star fill="#FFD700" color="#FFD700" size={16} />

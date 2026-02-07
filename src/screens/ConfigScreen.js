@@ -30,6 +30,7 @@ export default function ConfigScreen({ route }) {
     const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedPlanId, setSelectedPlanId] = useState(null);
+    const [isCustomMode, setIsCustomMode] = useState(false); // New state for Custom Mode
     const [customPower, setCustomPower] = useState(25); // Default Custom power
     const [walletBalance, setWalletBalance] = useState('0.00');
     const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -90,8 +91,10 @@ export default function ConfigScreen({ route }) {
             setPlans(filteredPlans);
             // Default Select first plan
             if (filteredPlans && filteredPlans.length > 0) {
-                // Try to find a default or just first
                 setSelectedPlanId(filteredPlans[0].id);
+                setIsCustomMode(false);
+            } else {
+                setIsCustomMode(true); // Default to custom if no plans
             }
         } catch (error) {
             console.error("Failed to fetch plans", error);
@@ -114,13 +117,17 @@ export default function ConfigScreen({ route }) {
 
     const handleSelectPlan = (id) => {
         setSelectedPlanId(id);
+        setIsCustomMode(false);
+    };
+
+    const handleSelectCustom = () => {
+        setIsCustomMode(true);
+        setSelectedPlanId(null);
     };
 
     const handlePay = async () => {
-        if (!selectedPlanId) {
-            // Use local alert/snackbar logic or keep using context for simple warnings if it works
-            // But for consistency let's use the Alert context which should be themed via CustomAlert
-            showAlert("Select Plan", "Please select a charging plan to continue.");
+        if (!selectedPlanId && !isCustomMode) {
+            showAlert("Select Option", "Please select a charging plan or Custom Mode to continue.");
             return;
         }
 
@@ -150,14 +157,15 @@ export default function ConfigScreen({ route }) {
         // Navigate to Session Screen
         const planDetails = plans.find(p => p.id === selectedPlanId);
 
-        console.log("Starting Session with Plan:", selectedPlanId);
+        console.log("Starting Session. Mode:", isCustomMode ? "Custom" : "Plan", "ID:", selectedPlanId || "N/A");
+
         navigation.replace('Session', {
-            planId: selectedPlanId,
+            planId: isCustomMode ? null : selectedPlanId, // Send null if custom
             chargerId: chargerId,
             boxId: boxId,
             stationName: stationName,
-            customPower: customPower,
-            rate: planDetails?.rate || 0,
+            customPower: isCustomMode ? customPower : null, // Send custom power only if in custom mode? Or always? User asked to "start session as per custom power".
+            rate: planDetails?.rate || 0, // Rate might need to be determined for custom sessions (e.g. default base rate)
             connectorType: connectorType || 'CCS2',
             chargerType: chargerType || 'Fast'
         });
@@ -210,29 +218,66 @@ export default function ConfigScreen({ route }) {
 
                 {/* Custom Power Control */}
                 <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Set Power Limit</Text>
+                    <Text style={styles.sectionTitle}>Charging Mode</Text>
                 </View>
-                <View style={[styles.planItem, { justifyContent: 'space-between', marginBottom: 10 }]}>
-                    <View>
-                        <Text style={styles.planName}>Max Power</Text>
-                        <Text style={styles.planMeta}>Limit charging speed</Text>
+
+                {/* Custom Session Option */}
+                <TouchableOpacity
+                    style={[
+                        styles.planItem,
+                        isCustomMode && styles.planActive,
+                        { marginBottom: 15, flexDirection: 'column', alignItems: 'flex-start', marginHorizontal: 16 }
+                    ]}
+                    onPress={handleSelectCustom}
+                    activeOpacity={0.9}
+                >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 10 }}>
+                        <View>
+                            <Text style={styles.planName}>Custom Session</Text>
+                            <Text style={styles.planMeta}>Set your own power limit</Text>
+                        </View>
+                        <View style={styles.radioCircle}>
+                            {isCustomMode && <View style={styles.radioInner} />}
+                        </View>
                     </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
-                        <TouchableOpacity
-                            onPress={() => setCustomPower(p => Math.max(1, p - 5))}
-                            style={styles.powerBtn}
-                        >
-                            <RemoveIcon width={20} height={20} fill="#fff" />
-                        </TouchableOpacity>
-                        <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold', minWidth: 60, textAlign: 'center' }}>{customPower} kW</Text>
-                        <TouchableOpacity
-                            onPress={() => setCustomPower(p => Math.min(Number(maxPower) || 120, p + 5))}
-                            style={styles.powerBtn}
-                        >
-                            <AddIcon width={20} height={20} fill="#fff" />
-                        </TouchableOpacity>
-                    </View>
-                </View>
+
+                    {/* Show Controls Only When Active */}
+                    {isCustomMode && (
+                        <View style={{ width: '100%', backgroundColor: 'rgba(0,0,0,0.2)', padding: 10, borderRadius: 12 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                                <Text style={{ color: '#ccc', fontSize: 14 }}>Power Limit (kW)</Text>
+                                <Text style={{ color: Colors.primaryContainer, fontSize: 14 }}>Max: {maxPower || 120} kW</Text>
+                            </View>
+
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, marginTop: 5 }}>
+                                <TouchableOpacity
+                                    onPress={(e) => {
+                                        e.stopPropagation();
+                                        setCustomPower(p => Math.max(1, p - 5));
+                                    }}
+                                    style={styles.powerBtn}
+                                >
+                                    <RemoveIcon width={20} height={20} fill="#fff" />
+                                </TouchableOpacity>
+                                <Text style={{ color: '#fff', fontSize: 24, fontWeight: 'bold', minWidth: 80, textAlign: 'center' }}>
+                                    {customPower} <Text style={{ fontSize: 14, color: '#888' }}>kW</Text>
+                                </Text>
+                                <TouchableOpacity
+                                    onPress={(e) => {
+                                        e.stopPropagation();
+                                        setCustomPower(p => Math.min(Number(maxPower) || 120, p + 5));
+                                    }}
+                                    style={styles.powerBtn}
+                                >
+                                    <AddIcon width={20} height={20} fill="#fff" />
+                                </TouchableOpacity>
+                            </View>
+                            <Text style={{ color: '#888', fontSize: 12, marginTop: 10, textAlign: 'center' }}>
+                                Adjustable based on car capability
+                            </Text>
+                        </View>
+                    )}
+                </TouchableOpacity>
 
                 {/* Plans Section */}
                 <View style={styles.sectionHeader}>
@@ -253,14 +298,19 @@ export default function ConfigScreen({ route }) {
                                         key={plan.id}
                                         style={[
                                             styles.planItem,
-                                            selectedPlanId === plan.id && styles.planActive
+                                            (selectedPlanId === plan.id && !isCustomMode) && styles.planActive
                                         ]}
                                         onPress={() => handleSelectPlan(plan.id)}
                                     >
-                                        <View style={styles.planInfo}>
-                                            <Text style={styles.planName}>{plan.planName}</Text>
-                                            <Text style={styles.planMeta}>{plan.description || `${plan.durationMin || 'Auto'} mins`}</Text>
-                                            <Text style={styles.planRate}>@ ₹{plan.rate || 0}/kWh</Text>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                                            <View style={[styles.radioCircle, { marginRight: 15 }]}>
+                                                {(selectedPlanId === plan.id && !isCustomMode) && <View style={styles.radioInner} />}
+                                            </View>
+                                            <View style={styles.planInfo}>
+                                                <Text style={styles.planName}>{plan.planName}</Text>
+                                                <Text style={styles.planMeta}>{plan.description || `${plan.durationMin || 'Auto'} mins`}</Text>
+                                                <Text style={styles.planRate}>@ ₹{plan.rate || 0}/kWh</Text>
+                                            </View>
                                         </View>
                                         <Text style={styles.planPrice}>₹ {plan.walletDeduction || plan.price || '0'}</Text>
                                     </TouchableOpacity>
@@ -314,13 +364,17 @@ export default function ConfigScreen({ route }) {
                                 <Text style={styles.statValue}>{stationName || "Unknown"}</Text>
                             </View>
                             <View style={styles.statRow}>
-                                <Text style={styles.statLabel}>Plan</Text>
-                                <Text style={styles.statValue}>{selectedPlan?.planName || "N/A"}</Text>
+                                <Text style={styles.statLabel}>Mode</Text>
+                                <Text style={[styles.statValue, { color: Colors.primaryContainer }]}>
+                                    {isCustomMode ? "Custom Session" : (selectedPlan?.planName || "Plan Session")}
+                                </Text>
                             </View>
-                            <View style={styles.statRow}>
-                                <Text style={styles.statLabel}>Power Limit</Text>
-                                <Text style={styles.statValue}>{customPower} kW</Text>
-                            </View>
+                            {isCustomMode && (
+                                <View style={styles.statRow}>
+                                    <Text style={styles.statLabel}>Power Limit</Text>
+                                    <Text style={styles.statValue}>{customPower} kW</Text>
+                                </View>
+                            )}
                             <View style={[styles.statRow, { marginTop: 8 }]}>
                                 <Text style={styles.statLabel}>Total Pay</Text>
                                 <Text style={[styles.statValue, { color: Colors.primaryContainer, fontSize: 16 }]}>
@@ -617,5 +671,20 @@ const styles = StyleSheet.create({
     confirmBtnText: {
         color: '#000', // Assuming primary is bright/green
         fontWeight: 'bold',
+    },
+    radioCircle: {
+        height: 20,
+        width: 20,
+        borderRadius: 10,
+        borderWidth: 2,
+        borderColor: '#555',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    radioInner: {
+        height: 10,
+        width: 10,
+        borderRadius: 5,
+        backgroundColor: Colors.primaryContainer,
     },
 });

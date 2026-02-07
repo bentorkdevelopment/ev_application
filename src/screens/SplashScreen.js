@@ -144,25 +144,70 @@ export default function SplashScreen({ navigation } = {}) {
             // Start the minimum splash timer
             const minSplashTime = new Promise(resolve => setTimeout(resolve, 2000));
 
+            // Failsafe: Force navigation after 8 seconds if nothing else happens
+            const safetyTimeout = setTimeout(() => {
+                console.warn("Splash Screen Timeout - Forcing Navigation");
+                handleNavigation();
+            }, 8000);
+
+            const handleNavigation = async () => {
+                try {
+                    clearTimeout(safetyTimeout); // Clear the failsafe if we get here normally
+
+                    if (!navigation) {
+                        console.error("Navigation prop is missing in SplashScreen");
+                        return;
+                    }
+
+                    const token = await authService.getToken();
+
+                    if (deepLinkChargerId) {
+                        const configParams = {
+                            chargerId: deepLinkChargerId,
+                            boxId: deepLinkChargerId,
+                            stationName: 'Bentork Charger',
+                            status: 'Available'
+                        };
+
+                        if (token) {
+                            navigation.replace('Config', configParams);
+                        } else {
+                            navigation.replace('Login', {
+                                postLoginTarget: 'Config',
+                                postLoginParams: configParams
+                            });
+                        }
+                    } else if (token) {
+                        navigation.replace('Home');
+                    } else {
+                        navigation.replace('Login');
+                    }
+                } catch (navError) {
+                    console.error("Navigation logic failed:", navError);
+                    // Last resort fallback
+                    if (navigation) navigation.replace('Login');
+                }
+            };
+
             // Check for In-App Updates (Android only for Immediate)
             if (Platform.OS === 'android') {
                 try {
                     const inAppUpdates = new SpInAppUpdates(false); // isDebug=false
-                    const result = await inAppUpdates.checkNeedsUpdate();
+                    // Add a timeout to the update check so it doesn't freeze the app
+                    const updateCheckPromise = inAppUpdates.checkNeedsUpdate();
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Update check timeout')), 3000));
+
+                    const result = await Promise.race([updateCheckPromise, timeoutPromise]);
 
                     if (result.shouldUpdate) {
-                        // Forces an immediate update. The Google Play UI will take over.
-                        // If the update is completed, the app will restart.
                         await inAppUpdates.startUpdate({
                             updateType: IAUUpdateKind.IMMEDIATE,
                         });
-                        // If the user cancels the update, the code continues here.
-                        // To strictly enforce "no update missed", you could recursively call checkAuth() 
-                        // or BackHandler.exitApp(), but typically the Immediate flow is blocking enough.
+                        return; // Stop here if updating
                     }
                 } catch (error) {
-                    console.log('In-App Update check failed:', error);
-                    // Fail silently and proceed to app if check fails (e.g. no network)
+                    console.log('In-App Update check failed or timed out:', error);
+                    // Proceed even if update check fails
                 }
             }
 
@@ -170,49 +215,24 @@ export default function SplashScreen({ navigation } = {}) {
             await minSplashTime;
 
             // Check for Deep Link
-            const initialUrl = await Linking.getInitialURL();
             let deepLinkChargerId = null;
-
-            if (initialUrl) {
-                const parts = initialUrl.split('/splash/');
-                if (parts.length > 1) {
-                    let id = parts[1];
-                    // Clean up URL parameters, fragments, and trailing slashes
-                    id = id.split('?')[0].split('#')[0];
-                    if (id.endsWith('/')) {
-                        id = id.slice(0, -1);
+            try {
+                const initialUrl = await Linking.getInitialURL();
+                if (initialUrl) {
+                    const parts = initialUrl.split('/splash/');
+                    if (parts.length > 1) {
+                        let id = parts[1];
+                        id = id.split('?')[0].split('#')[0];
+                        if (id.endsWith('/')) id = id.slice(0, -1);
+                        if (id) deepLinkChargerId = id;
                     }
-                    if (id) deepLinkChargerId = id;
                 }
+            } catch (linkError) {
+                console.warn("Deep link check failed:", linkError);
             }
 
-            const token = await authService.getToken();
-
-            if (navigation) {
-                if (deepLinkChargerId) {
-                    const configParams = {
-                        chargerId: deepLinkChargerId,
-                        boxId: deepLinkChargerId,
-                        stationName: 'Bentork Charger',
-                        status: 'Available'
-                    };
-
-                    if (token) {
-                        // Navigate to ConfigScreen with extracted ID
-                        navigation.replace('Config', configParams);
-                    } else {
-                        // Not logged in: Go to Login, but pass the target
-                        navigation.replace('Login', {
-                            postLoginTarget: 'Config',
-                            postLoginParams: configParams
-                        });
-                    }
-                } else if (token) {
-                    navigation.replace('Home');
-                } else {
-                    navigation.replace('Login');
-                }
-            }
+            // Proceed to navigation
+            await handleNavigation();
         };
 
         checkAuth();

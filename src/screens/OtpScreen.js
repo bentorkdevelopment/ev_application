@@ -2,55 +2,138 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Phone, ChevronLeft, ArrowRight, CheckCircle, Smartphone } from 'lucide-react-native';
+import { useAlert } from '../context/AlertContext';
+import { authApi } from '../services/api';
 
-export default function OtpScreen({ navigation }) {
+export default function OtpScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
+    const { showAlert } = useAlert();
+    const googleUser = route.params?.googleUser;
 
     // UI State
-    const [step, setStep] = useState(1); // 1: Phone Number, 2: OTP
+    const [step, setStep] = useState(1); // 1: Phone Number (and Register if Google), 2: OTP (Legacy/Hidden)
     const [loading, setLoading] = useState(false);
 
     // Form Data
     const [phoneNumber, setPhoneNumber] = useState('');
     const [otp, setOtp] = useState('');
 
-    const handleSendCode = async () => {
+    const handleAction = async () => {
         // Basic validation
         if (!phoneNumber || phoneNumber.length < 10) {
-            Alert.alert("Invalid Number", "Please enter a valid 10-digit mobile number.");
+            showAlert("Invalid Number", "Please enter a valid 10-digit mobile number.");
             return;
         }
 
         setLoading(true);
-        // Simulate API Call to send OTP
+
+        // CASE 1: Google User - Register DIRECTLY (No OTP)
+        if (googleUser) {
+            console.log("Completing Google Sign Up for:", googleUser.email, "Mobile:", phoneNumber);
+
+            // Generate a random strong password for the user since they use Google Login
+            const randomPassword = `Google_${Math.random().toString(36).slice(-8)}!A1`;
+
+            try {
+                const response = await authApi.register({
+                    name: googleUser.name || 'Google User',
+                    email: googleUser.email,
+                    mobile: phoneNumber,
+                    password: randomPassword,
+                    confirmPassword: randomPassword
+                });
+
+                console.log("Registration Success:", response);
+                setLoading(false);
+
+                showAlert("Success", "Account created successfully!", [
+                    {
+                        text: "Continue to Home",
+                        onPress: () => {
+                            navigation.reset({
+                                index: 0,
+                                routes: [{ name: 'Home' }],
+                            });
+                        }
+                    }
+                ]);
+            } catch (error) {
+                setLoading(false);
+                console.error("Registration Failed:", error);
+                const msg = error.userMessage || error.response?.data || "Registration failed. Please try again.";
+                showAlert("Error", typeof msg === 'string' ? msg : JSON.stringify(msg));
+            }
+            return;
+        }
+
+        // CASE 2: Legacy Mobile Login (If ever used) - Send OTP
         console.log("Sending OTP to:", phoneNumber);
 
         setTimeout(() => {
             setLoading(false);
             setStep(2);
             // In a real app, you might auto-fill the OTP or show a toast
-            Alert.alert("Code Sent", `We've sent a text to +91 ${phoneNumber}`);
+            showAlert("Code Sent", `We've sent a text to +91 ${phoneNumber}`);
         }, 1500);
     };
 
     const handleVerifyOtp = async () => {
         if (!otp || otp.length < 4) {
-            Alert.alert("Invalid Code", "Please enter the valid 4-digit code.");
+            showAlert("Invalid Code", "Please enter the valid 4-digit code.");
             return;
         }
 
         setLoading(true);
         console.log("Verifying OTP:", otp, "for number:", phoneNumber);
 
-        // Simulate Verification
-        setTimeout(() => {
+        try {
+            if (googleUser) {
+                // GOOGLE SIGN UP COMPLETION
+                console.log("Completing Google Sign Up for:", googleUser.email);
+
+                // Generate a random strong password for the user since they use Google Login
+                const randomPassword = `Google_${Math.random().toString(36).slice(-8)}!A1`;
+
+                const response = await authApi.register({
+                    name: googleUser.name || 'Google User',
+                    email: googleUser.email,
+                    mobile: phoneNumber,
+                    password: randomPassword,
+                    confirmPassword: randomPassword
+                });
+
+                console.log("Registration Success:", response);
+
+                // Auto Login or Redirect
+                setLoading(false);
+                showAlert("Success", "Account verified and created successfully!", [
+                    {
+                        text: "Continue to Home",
+                        onPress: () => {
+                            navigation.reset({
+                                index: 0,
+                                routes: [{ name: 'Home' }],
+                            });
+                        }
+                    }
+                ]);
+
+            } else {
+                // STANDARD MOBILE LOGIN MOCK
+                setTimeout(() => {
+                    setLoading(false);
+                    showAlert("Success", "Verified successfully!", [
+                        { text: "Continue", onPress: () => navigation.replace('Home') }
+                    ]);
+                }, 2000);
+            }
+
+        } catch (error) {
             setLoading(false);
-            // Determine where to go - usually Home if login, or next step if registration
-            // Assuming this is "Login with OTP"
-            Alert.alert("Success", "Verified successfully!", [
-                { text: "Continue", onPress: () => navigation.replace('Home') }
-            ]);
-        }, 2000);
+            console.error("Verification/Registration Failed:", error);
+            const msg = error.userMessage || error.response?.data || "Verification failed. Please try again.";
+            showAlert("Error", typeof msg === 'string' ? msg : JSON.stringify(msg));
+        }
     };
 
     return (
@@ -76,12 +159,13 @@ export default function OtpScreen({ navigation }) {
                         <Smartphone size={32} color="#39E29B" />
                     </View>
                     <Text style={styles.title}>
-                        {step === 1 ? "Login with Phone" : "Verify Number"}
+                        {googleUser ? "Complete Profile" : (step === 1 ? "Login with Phone" : "Verify Number")}
                     </Text>
                     <Text style={styles.subtitle}>
-                        {step === 1
-                            ? "Enter your mobile number to receive a verification code."
-                            : `Enter the 4-digit code sent to +91 ${phoneNumber}`}
+                        {googleUser
+                            ? "Please enter your mobile number to complete registration."
+                            : (step === 1 ? "Enter your mobile number to complete verification." : `Enter the 4-digit code sent to +91 ${phoneNumber}`)
+                        }
                     </Text>
                 </View>
 
@@ -106,14 +190,14 @@ export default function OtpScreen({ navigation }) {
 
                         <TouchableOpacity
                             style={styles.actionBtn}
-                            onPress={handleSendCode}
+                            onPress={handleAction}
                             disabled={loading}
                         >
                             {loading ? (
                                 <ActivityIndicator color="#000" />
                             ) : (
                                 <View style={styles.btnContent}>
-                                    <Text style={styles.btnText}>Send Code</Text>
+                                    <Text style={styles.btnText}>{googleUser ? "Complete Sign Up" : "Send Code"}</Text>
                                     <ArrowRight size={20} color="#000" style={{ marginLeft: 8 }} />
                                 </View>
                             )}
@@ -147,7 +231,7 @@ export default function OtpScreen({ navigation }) {
                             {loading ? (
                                 <ActivityIndicator color="#000" />
                             ) : (
-                                <Text style={styles.btnText}>Verify & Login</Text>
+                                <Text style={styles.btnText}>Verify & {googleUser ? 'Register' : 'Login'}</Text>
                             )}
                         </TouchableOpacity>
 
@@ -155,7 +239,7 @@ export default function OtpScreen({ navigation }) {
                             style={styles.resendBtn}
                             onPress={() => {
                                 setOtp('');
-                                Alert.alert("Sent!", "New code sent.");
+                                showAlert("Sent!", "New code sent.");
                             }}
                         >
                             <Text style={styles.resendText}>Resend Code</Text>

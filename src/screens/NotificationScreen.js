@@ -1,91 +1,141 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Bell, Calendar, Info, AlertTriangle, CheckCircle } from 'lucide-react-native';
-
-const INITIAL_NOTIFICATIONS = [
-    {
-        id: '1',
-        title: 'Charging Session Completed',
-        message: 'Your charging session at Bentork Station - Pune has successfully completed. Total cost: ₹250.',
-        type: 'success',
-        timestamp: '2 mins ago',
-        read: false,
-    },
-    {
-        id: '2',
-        title: 'Low Wallet Balance',
-        message: 'Your wallet balance is low. Please recharge to continue seamless charging services.',
-        type: 'warning',
-        timestamp: '1 hour ago',
-        read: false,
-    },
-    {
-        id: '3',
-        title: 'New Feature Alert!',
-        message: 'We have introduced custom power selection for supported chargers. Check it out now!',
-        type: 'info',
-        timestamp: '1 day ago',
-        read: true,
-    },
-    {
-        id: '4',
-        title: 'Maintenance Update',
-        message: 'Scheduled maintenance for server upgrades on Sunday from 2 AM to 4 AM.',
-        type: 'alert',
-        timestamp: '2 days ago',
-        read: true,
-    },
-    {
-        id: '5',
-        title: 'Welcome to Bentork EV',
-        message: 'Thanks for joining the revolution! Explore nearby chargers and start your first session.',
-        type: 'info',
-        timestamp: '5 days ago',
-        read: true,
-    }
-];
+import { ChevronLeft, Bell, Info, AlertTriangle, CheckCircle, SmartphoneCharging } from 'lucide-react-native';
+import { notificationApi } from '../services/api';
+import { authService } from '../services/auth';
+import { useFocusEffect } from '@react-navigation/native';
 
 const NotificationScreen = ({ navigation }) => {
     const insets = useSafeAreaInsets();
-    const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
+    const [allNotifications, setAllNotifications] = useState([]);
+    const [displayLimit, setDisplayLimit] = useState(10);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
 
-    const markAsRead = (id) => {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-    };
+    // Derived state for visible items
+    const visibleNotifications = allNotifications.slice(0, displayLimit);
 
-    const markAllAsRead = () => {
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    }
+    const fetchNotifications = async () => {
+        try {
+            const user = await authService.getUser();
+            if (user) {
+                const userId = user.id || user.userId;
+                const data = await notificationApi.getAllNotifications(userId);
+                // Ensure data is array
+                const list = Array.isArray(data) ? data : (data?.notifications || []);
 
-    const getIcon = (type) => {
-        switch (type) {
-            case 'success': return <CheckCircle size={24} color="#00E676" />;
-            case 'warning': return <AlertTriangle size={24} color="#FFC107" />; // Amber
-            case 'alert': return <AlertTriangle size={24} color="#FF5252" />; // Red
-            default: return <Info size={24} color="#2979FF" />; // Blue
+                // Sort by new first if not already
+                const sorted = list.sort((a, b) => {
+                    const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
+                    const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
+                    return timeB - timeA;
+                });
+
+                setAllNotifications(sorted);
+                setDisplayLimit(10); // Reset limit on fresh fetch
+            }
+        } catch (error) {
+            console.log("Error fetching notifications:", error);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
         }
     };
 
-    const renderItem = ({ item }) => (
-        <TouchableOpacity
-            style={[styles.notificationCard, !item.read && styles.unreadCard]}
-            onPress={() => markAsRead(item.id)}
-            activeOpacity={0.8}
-        >
-            <View style={styles.iconContainer}>
-                {getIcon(item.type)}
-            </View>
-            <View style={styles.contentContainer}>
-                <View style={styles.headerRow}>
-                    <Text style={[styles.title, !item.read && styles.unreadTitle]}>{item.title}</Text>
-                    {!item.read && <View style={styles.dot} />}
-                </View>
-                <Text style={styles.message} numberOfLines={2}>{item.message}</Text>
-                <Text style={styles.timestamp}>{item.timestamp}</Text>
-            </View>
-        </TouchableOpacity>
+    useFocusEffect(
+        useCallback(() => {
+            fetchNotifications();
+        }, [])
     );
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        fetchNotifications();
+    };
+
+    const markAsRead = async (id, currentReadStatus) => {
+        if (currentReadStatus) return; // Already read
+
+        // Optimistic update
+        setAllNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true, isRead: true } : n));
+
+        try {
+            await notificationApi.markAsRead(id);
+        } catch (error) {
+            console.error("Failed to mark as read", error);
+            // Revert on failure? Usually not worth the jarring UI flip for read status.
+        }
+    };
+
+    const markAllAsRead = async () => {
+        const unread = allNotifications.filter(n => !n.read && !n.isRead);
+        if (unread.length === 0) return;
+
+        // Optimistic
+        setAllNotifications(prev => prev.map(n => ({ ...n, read: true, isRead: true })));
+
+        try {
+            await Promise.all(unread.map(n => notificationApi.markAsRead(n.id)));
+        } catch (error) {
+            console.error("Failed to mark all as read", error);
+        }
+    }
+
+    const getIcon = (type) => {
+        const lowerType = (type || '').toLowerCase();
+        if (lowerType.includes('success') || lowerType.includes('complete')) return <CheckCircle size={24} color="#00E676" />;
+        if (lowerType.includes('warn') || lowerType.includes('low')) return <AlertTriangle size={24} color="#FFC107" />;
+        if (lowerType.includes('alert') || lowerType.includes('fail')) return <AlertTriangle size={24} color="#FF5252" />;
+        if (lowerType.includes('charging') || lowerType.includes('session')) return <SmartphoneCharging size={24} color="#00E676" />;
+        return <Info size={24} color="#2979FF" />;
+    };
+
+    const formatTime = (time) => {
+        if (!time) return '';
+        try {
+            const date = new Date(time);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.round(diffMs / 60000);
+            const diffHrs = Math.round(diffMs / 3600000);
+            const diffDays = Math.round(diffMs / 86400000);
+
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins} min ago`;
+            if (diffHrs < 24) return `${diffHrs} hr ago`;
+            if (diffDays === 1) return 'Yesterday';
+            if (diffDays < 7) return `${diffDays} days ago`;
+            return date.toLocaleDateString();
+        } catch (e) {
+            return time; // Fallback
+        }
+    };
+
+    const renderItem = ({ item }) => {
+        const isRead = item.read || item.isRead || false; // Handle common backend field names
+        return (
+            <TouchableOpacity
+                style={[styles.notificationCard, !isRead && styles.unreadCard]}
+                onPress={() => markAsRead(item.id, isRead)}
+                activeOpacity={0.8}
+            >
+                <View style={styles.iconContainer}>
+                    {getIcon(item.type)}
+                </View>
+                <View style={styles.contentContainer}>
+                    <View style={styles.headerRow}>
+                        <Text style={[styles.title, !isRead && styles.unreadTitle]}>{item.title}</Text>
+                        {!isRead && <View style={styles.dot} />}
+                    </View>
+                    <Text style={styles.message} numberOfLines={3}>{item.message || item.body}</Text>
+                    <Text style={styles.timestamp}>
+                        {formatTime(item.createdAt || item.timestamp)}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+        );
+    };
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -100,13 +150,34 @@ const NotificationScreen = ({ navigation }) => {
                 </TouchableOpacity>
             </View>
 
-            {notifications.length > 0 ? (
+            {loading ? (
+                <View style={styles.centerContainer}>
+                    <ActivityIndicator size="large" color="#00E676" />
+                </View>
+            ) : allNotifications.length > 0 ? (
                 <FlatList
-                    data={notifications}
+                    data={visibleNotifications}
                     renderItem={renderItem}
-                    keyExtractor={item => item.id}
+                    keyExtractor={item => (item.id || Math.random()).toString()}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00E676" />
+                    }
+                    ListFooterComponent={
+                        allNotifications.length > displayLimit ? (
+                            <TouchableOpacity
+                                style={styles.loadMoreButton}
+                                onPress={() => setDisplayLimit(prev => prev + 10)}
+                            >
+                                <Text style={styles.loadMoreText}>Load More</Text>
+                            </TouchableOpacity>
+                        ) : (
+                            <View style={styles.footerNote}>
+                                <Text style={styles.footerNoteText}>No more notifications</Text>
+                            </View>
+                        )
+                    }
                 />
             ) : (
                 <View style={styles.emptyContainer}>
@@ -208,10 +279,36 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    centerContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     emptyText: {
         color: 'rgba(255,255,255,0.4)',
         marginTop: 16,
         fontSize: 16,
+    },
+    loadMoreButton: {
+        paddingVertical: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 10,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 8,
+    },
+    loadMoreText: {
+        color: '#00E676',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    footerNote: {
+        paddingVertical: 20,
+        alignItems: 'center',
+    },
+    footerNoteText: {
+        color: 'rgba(255,255,255,0.2)',
+        fontSize: 12,
     },
 });
 

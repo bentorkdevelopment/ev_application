@@ -1,65 +1,102 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Platform, KeyboardAvoidingView, ScrollView, Alert, ActivityIndicator } from 'react-native';
+
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Platform, KeyboardAvoidingView, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Mail, Lock, User, Eye, EyeOff, CheckCircle } from 'lucide-react-native';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { Mail, Lock, User, Eye, EyeOff, CheckCircle, Phone } from 'lucide-react-native';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import { GOOGLE_WEB_CLIENT_ID } from '@env';
+import { authApi } from '../services/api';
+import { useAlert } from '../context/AlertContext';
 
 export default function RegisterScreen({ navigation }) {
     const insets = useSafeAreaInsets();
+    const { showAlert } = useAlert();
 
     // Form State
     const [name, setName] = useState('');
+    const [mobile, setMobile] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
 
+    useEffect(() => {
+        GoogleSignin.configure({
+            webClientId: GOOGLE_WEB_CLIENT_ID,
+            offlineAccess: true,
+            scopes: ['email', 'profile'],
+        });
+    }, []);
+
     const handleRegister = async () => {
-        if (!name || !email || !password) {
-            Alert.alert("Error", "Please fill in all fields");
+        if (!name || !mobile || !email || !password) {
+            showAlert("Error", "Please fill in all fields");
             return;
         }
 
         if (password !== confirmPassword) {
-            Alert.alert("Error", "Passwords do not match");
+            showAlert("Error", "Passwords do not match");
             return;
         }
 
         setLoading(true);
         try {
-            // TODO: Connect to backend Registration API
-            // const response = await authApi.register({ name, email, password });
-            console.log("Registering User:", { name, email, password });
+            // Connected to backend Registration API
+            console.log("Registering User:", { name, mobile, email });
+            const response = await authApi.register({
+                name,
+                mobile,
+                email,
+                password,
+                confirmPassword
+            });
 
-            // Simulate API call
-            setTimeout(() => {
-                setLoading(false);
-                Alert.alert("Success", "Account created successfully!", [
-                    { text: "Login", onPress: () => navigation.navigate('Login') }
-                ]);
-            }, 1500);
+            setLoading(false);
+            showAlert("Success", "Account created successfully! Please login.", [
+                { text: "Login", onPress: () => navigation.navigate('Login') }
+            ]);
 
         } catch (error) {
             console.error("Registration failed", error);
             setLoading(false);
-            Alert.alert("Error", "Registration failed. Please try again.");
+            const msg = error.userMessage || error.response?.data || "Registration failed. Please try again.";
+            showAlert("Error", typeof msg === 'string' ? msg : JSON.stringify(msg));
         }
     };
 
     const handleGoogleRegister = async () => {
-        // Reuse Google Sign In Logic (usually same for login/register)
-        // For now, navigate to Login to complete Google flow or duplicate logic
-        // Duplicating basic logic or alerting user
         try {
             await GoogleSignin.hasPlayServices();
-            // Just trigger the sign in flow, the LoginScreen usually handles the backend sync.
-            // Or better, we just navigate to Login which has the robust Google setup
-            Alert.alert("Use Google Sign In", "Please use the Google Sign In button on the Login page to continue with your Google account.", [
-                { text: "Go to Login", onPress: () => navigation.navigate('Login') }
-            ]);
+            const userInfo = await GoogleSignin.signIn();
+
+            console.log("Google Sign In Raw Response:", JSON.stringify(userInfo));
+
+            // Robust user extraction for different library versions
+            const user = userInfo.data?.user || userInfo.user || userInfo;
+
+            if (user && user.email) {
+                // Navigate to OTP Screen for Mobile Verification
+                navigation.navigate('OtpLogin', {
+                    googleUser: {
+                        name: user.name,
+                        email: user.email,
+                        photo: user.photo
+                    }
+                });
+            } else {
+                console.warn("Could not extract user details.", userInfo);
+                showAlert("Error", "Could not get user details from Google.");
+            }
         } catch (error) {
-            console.error(error);
+            console.error("Google Sign Up Error:", error);
+            if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+                // User cancelled, do nothing or show toast
+            } else if (error.code === statusCodes.IN_PROGRESS) {
+                // Operation in progress
+            } else {
+                showAlert("Sign In Failed", error.message || "Could not sign in with Google.");
+            }
         }
     };
 
@@ -76,10 +113,10 @@ export default function RegisterScreen({ navigation }) {
                 <View style={styles.headerContainer}>
                     <View style={styles.logoContainer}>
                         <Image
-                            source={require('../assets/images/logo.png')} // Changed to normal logo if available, or keep inverted
+                            source={require('../assets/images/logo_inverted.png')}
                             style={styles.logo}
                             resizeMode="contain"
-                            tintColor="#39E29B" // Apply theme green tint
+                            tintColor="#ffffff"
                         />
                     </View>
                     <Text style={styles.title}>Create Account</Text>
@@ -98,6 +135,19 @@ export default function RegisterScreen({ navigation }) {
                             value={name}
                             onChangeText={setName}
                             autoCapitalize="words"
+                        />
+                    </View>
+
+                    {/* Mobile Input */}
+                    <View style={styles.inputWrapper}>
+                        <Phone size={20} color="#888" style={styles.inputIcon} />
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Mobile Number"
+                            placeholderTextColor="#666"
+                            value={mobile}
+                            onChangeText={setMobile}
+                            keyboardType="phone-pad"
                         />
                     </View>
 
@@ -164,9 +214,9 @@ export default function RegisterScreen({ navigation }) {
                     </View>
 
                     {/* Google Button */}
-                    <TouchableOpacity style={styles.googleBtn} onPress={() => navigation.navigate('Login')}>
+                    <TouchableOpacity style={styles.googleBtn} onPress={handleGoogleRegister}>
                         <Image
-                            source={{ uri: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/768px-Google_%22G%22_logo.svg.png' }}
+                            source={require('../assets/images/google_ic.webp')}
                             style={styles.googleIcon}
                         />
                         <Text style={styles.googleBtnText}>Continue with Google</Text>
@@ -203,17 +253,17 @@ const styles = StyleSheet.create({
     logoContainer: {
         width: 80,
         height: 80,
-        backgroundColor: 'rgba(57, 226, 155, 0.1)',
+        backgroundColor: 'rgba(57, 226, 156, 0)',
         borderRadius: 40,
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 20,
-        borderWidth: 1,
+        marginBottom: 0,
+        borderWidth: 0,
         borderColor: 'rgba(57, 226, 155, 0.2)',
     },
     logo: {
-        width: 40,
-        height: 40,
+        width: 140,
+        height: 140,
     },
     title: {
         fontSize: 28,

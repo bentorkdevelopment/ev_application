@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar, Alert, Animated, Easing } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ArrowDown, ArrowUp, X, Wallet as WalletIcon } from 'lucide-react-native';
 import { authService } from '../services/auth';
@@ -7,6 +7,9 @@ import { authApi, userApi, razorpayApi } from '../services/api';
 import api from '../services/api';
 import RazorpayCheckout from 'react-native-razorpay';
 import { RAZORPAY_KEY_ID } from '@env';
+import ReactNativeBiometrics, { BiometryTypes } from 'react-native-biometrics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import PinPromptModal from '../components/PinPromptModal';
 
 const { width } = Dimensions.get('window');
 
@@ -22,18 +25,104 @@ export default function WalletScreen({ navigation }) {
     const [loading, setLoading] = useState(false);
     const [walletBalance, setWalletBalance] = useState('0.00');
 
+    // Skeleton Loading & Fade State
+    const [isFetching, setIsFetching] = useState(true);
+    const pulseAnim = useRef(new Animated.Value(0.3)).current;
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+
+    // Security State
+    const [isLocked, setIsLocked] = useState(false); // Default to false, check on mount
+    const [showPinModal, setShowPinModal] = useState(false);
+
     useEffect(() => {
-        loadData();
+        checkSecurity();
     }, []);
+
+    const checkSecurity = async () => {
+        try {
+            const secureWallet = await AsyncStorage.getItem('secureWallet');
+            if (secureWallet === 'true') {
+                setIsLocked(true);
+                // Check Biometrics
+                const rnBiometrics = new ReactNativeBiometrics();
+                const { available, biometryType } = await rnBiometrics.isSensorAvailable();
+
+                if (available && biometryType) {
+                    // Trigger Fingerprint/Biometric
+                    rnBiometrics.simplePrompt({ promptMessage: 'Confirm fingerprint to access Wallet' })
+                        .then((resultObject) => {
+                            const { success } = resultObject;
+                            if (success) {
+                                setIsLocked(false);
+                                startLoadingData(); // Load data after unlock
+                            } else {
+                                // Failed or cancelled, fallback to PIN logic
+                                setShowPinModal(true);
+                            }
+                        })
+                        .catch(() => {
+                            setShowPinModal(true);
+                        });
+                } else {
+                    // No Bio, show PIN
+                    setShowPinModal(true);
+                }
+            } else {
+                setIsLocked(false);
+                startLoadingData();
+            }
+        } catch (e) {
+            console.error("Security check failed:", e);
+            startLoadingData();
+        }
+    };
+
+    const startLoadingData = () => {
+        // Start Pulse Animation
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, {
+                    toValue: 0.6,
+                    duration: 800,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(pulseAnim, {
+                    toValue: 0.3,
+                    duration: 800,
+                    useNativeDriver: true,
+                }),
+            ])
+        ).start();
+
+        loadDataWithDelay();
+    };
+
+    const loadDataWithDelay = async () => {
+        setIsFetching(true);
+        // Minimum loading time of 1.5s to show skeleton as per user request
+        const minLoadTime = new Promise(resolve => setTimeout(resolve, 1500));
+        const dataLoad = loadData();
+
+        await Promise.all([minLoadTime, dataLoad]);
+
+        setIsFetching(false);
+        // Fade in actual content
+        Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+            easing: Easing.out(Easing.ease)
+        }).start();
+    };
 
     const loadData = async () => {
         const userData = await authService.getUser();
         setUser(userData);
         if (userData?.userId || userData?.id) {
-            fetchTransactions(userData.userId || userData.id);
+            await fetchTransactions(userData.userId || userData.id);
         }
         if (userData?.email) {
-            fetchWalletBalance(userData.email);
+            await fetchWalletBalance(userData.email);
         }
     };
 
@@ -62,7 +151,6 @@ export default function WalletScreen({ navigation }) {
             setTransactions(response.data || []);
         } catch (error) {
             console.error("Failed to fetch transactions", error);
-            // Fallback?
         }
     };
 
@@ -89,11 +177,7 @@ export default function WalletScreen({ navigation }) {
             // 1. Create Order on Backend
             console.log("Creating order for amount:", amount);
             const orderData = await razorpayApi.createOrder(amount);
-            console.log("Order created:", orderData);
 
-            // Backend returns the order object or ID. Usually orderData.id is the order_id.
-            // Adjust based on actual backend response format found during runtime if needed.
-            // Assuming orderData is the Order object which has 'id', 'amount', etc.
             const orderId = orderData.id || orderData; // Fallback if returns string directly
 
             const options = {
@@ -138,7 +222,6 @@ export default function WalletScreen({ navigation }) {
 
                     // Update balance and transactions by reloading full data
                     if (verificationResponse.walletAmount) {
-                        console.log("Setting balance from response:", verificationResponse.walletAmount);
                         setWalletBalance(verificationResponse.walletAmount);
                     }
 
@@ -172,9 +255,6 @@ export default function WalletScreen({ navigation }) {
 
     const renderTransactionItem = ({ item }) => {
         const isCredit = item.type === 'credit' || item.type === 'CREDIT';
-
-        // Determine icon color and bg based on type
-        // Web: credit = primary container (greenish), debit = red tint
         const iconBg = isCredit ? '#004D40' : 'rgba(255, 82, 82, 0.2)';
         const iconColor = isCredit ? '#39E29B' : '#FF5252';
 
@@ -206,9 +286,57 @@ export default function WalletScreen({ navigation }) {
         );
     };
 
+    // Skeleton Component
+    const SkeletonBlock = ({ width, height, style }) => (
+        <Animated.View
+            style={[
+                {
+                    width: width,
+                    height: height,
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                    borderRadius: 8,
+                    opacity: pulseAnim,
+                },
+                style
+            ]}
+        />
+    );
+
+    // If locked, show minimal UI + PIN Modal
+    if (isLocked) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <StatusBar barStyle="light-content" backgroundColor="#121212" />
+                <View style={[styles.header, { position: 'absolute', top: 0, width: '100%', paddingTop: insets.top + 10 }]}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+                        <ChevronLeft size={24} color="#fff" />
+                    </TouchableOpacity>
+                    <Text style={styles.pageTitle}>My Wallet</Text>
+                </View>
+
+                <Text style={{ color: '#fff', fontSize: 16 }}>Authentication Required</Text>
+
+                <PinPromptModal
+                    visible={showPinModal}
+                    title="Enter Access PIN"
+                    onSuccess={() => {
+                        setShowPinModal(false);
+                        setIsLocked(false);
+                        startLoadingData();
+                    }}
+                    onClose={() => {
+                        setShowPinModal(false);
+                        navigation.goBack();
+                    }}
+                />
+            </View>
+        );
+    }
+
     return (
         <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor="#121212" />
+
             {/* Header */}
             <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
@@ -217,51 +345,94 @@ export default function WalletScreen({ navigation }) {
                 <Text style={styles.pageTitle}>My Wallet</Text>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {isFetching ? (
+                /* Skeleton Loader UI */
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
-                {/* Balance Card - Gradient Style */}
-                <View style={styles.balanceCard}>
-                    <View style={styles.balanceLabelRow}>
-                        <WalletIcon size={18} color="rgba(255,255,255,0.7)" />
-                        <Text style={styles.balanceLabel}>Total Balance</Text>
+                    {/* Balance Card Skeleton */}
+                    <View style={[styles.balanceCard, { borderColor: 'transparent' }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
+                            <SkeletonBlock width={100} height={16} />
+                        </View>
+                        <SkeletonBlock width={180} height={36} style={{ marginBottom: 20 }} />
+                        <SkeletonBlock width="100%" height={50} style={{ borderRadius: 14 }} />
                     </View>
-                    <Text style={styles.balanceAmount}>
-                        ₹{parseFloat(walletBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </Text>
-                    <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddModal(true)}>
-                        <Text style={styles.addBtnText}>+ Add Money</Text>
-                    </TouchableOpacity>
-                </View>
 
-                {/* Ad Carousel (Simplified for now - static image or simple view) */}
-                <View style={styles.adCard}>
-                    <View style={styles.adContent}>
-                        <Text style={styles.adTitle}>Bentork Batteries</Text>
-                        <Text style={styles.adDesc}>Power your drive with long-lasting life.</Text>
-                        <TouchableOpacity style={styles.adButton}>
-                            <Text style={styles.adButtonText}>View Range</Text>
-                        </TouchableOpacity>
+                    {/* Ad Card Skeleton */}
+                    <View style={styles.adCard}>
+                        <SkeletonBlock width={120} height={20} style={{ marginBottom: 10 }} />
+                        <SkeletonBlock width={200} height={14} style={{ marginBottom: 20 }} />
+                        <SkeletonBlock width={80} height={30} style={{ borderRadius: 8 }} />
                     </View>
-                    {/* Placeholder for battery image if we had one locally */}
-                    {/* <Image source={...} style={styles.adImage} /> */}
-                </View>
 
-                {/* Transactions */}
-                <Text style={styles.sectionTitle}>Payment History</Text>
+                    {/* Transactions Header Skeleton */}
+                    <SkeletonBlock width={150} height={20} style={{ marginBottom: 20 }} />
 
-                {transactions.length === 0 ? (
-                    <View style={styles.emptyState}>
-                        <Text style={styles.emptyText}>No recent transactions</Text>
-                    </View>
-                ) : (
-                    transactions.map((item, index) => (
-                        <View key={index}>{renderTransactionItem({ item })}</View>
-                    ))
-                )}
+                    {/* List Items Skeleton */}
+                    {[1, 2, 3, 4, 5].map((key) => (
+                        <View key={key} style={styles.txItem}>
+                            <View style={styles.txLeft}>
+                                <SkeletonBlock width={42} height={42} style={{ borderRadius: 14, marginRight: 14 }} />
+                                <View>
+                                    <SkeletonBlock width={100} height={16} style={{ marginBottom: 6 }} />
+                                    <SkeletonBlock width={60} height={12} />
+                                </View>
+                            </View>
+                            <View style={{ alignItems: 'flex-end' }}>
+                                <SkeletonBlock width={50} height={16} style={{ marginBottom: 6 }} />
+                                <SkeletonBlock width={40} height={12} />
+                            </View>
+                        </View>
+                    ))}
+                </ScrollView>
+            ) : (
+                /* Actual Content */
+                <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+                    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
-                {/* Add ample bottom padding */}
-                <View style={{ height: 50 }} />
-            </ScrollView>
+                        {/* Balance Card - Gradient Style */}
+                        <View style={styles.balanceCard}>
+                            <View style={styles.balanceLabelRow}>
+                                <WalletIcon size={18} color="rgba(255,255,255,0.7)" />
+                                <Text style={styles.balanceLabel}>Total Balance</Text>
+                            </View>
+                            <Text style={styles.balanceAmount}>
+                                ₹{parseFloat(walletBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </Text>
+                            <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddModal(true)}>
+                                <Text style={styles.addBtnText}>+ Add Money</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Ad Carousel */}
+                        <View style={styles.adCard}>
+                            <View style={styles.adContent}>
+                                <Text style={styles.adTitle}>Bentork Batteries</Text>
+                                <Text style={styles.adDesc}>Power your drive with long-lasting life.</Text>
+                                <TouchableOpacity style={styles.adButton}>
+                                    <Text style={styles.adButtonText}>View Range</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+
+                        {/* Transactions */}
+                        <Text style={styles.sectionTitle}>Payment History</Text>
+
+                        {transactions.length === 0 ? (
+                            <View style={styles.emptyState}>
+                                <Text style={styles.emptyText}>No recent transactions</Text>
+                            </View>
+                        ) : (
+                            transactions.map((item, index) => (
+                                <View key={index}>{renderTransactionItem({ item })}</View>
+                            ))
+                        )}
+
+                        {/* Add ample bottom padding */}
+                        <View style={{ height: 50 }} />
+                    </ScrollView>
+                </Animated.View>
+            )}
 
             {/* Add Money Modal */}
             <Modal
