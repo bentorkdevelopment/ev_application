@@ -92,8 +92,8 @@ android {
         applicationId "com.bentork.application"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 10
+        versionName "1.6.2"
         // This injects the variable into your Manifest
         manifestPlaceholders = [MY_SECRET_KEY_PLACEHOLDER: mySecretKey]
     }

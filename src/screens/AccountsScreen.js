@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, User, LogOut, Bell, Shield, Smartphone } from 'lucide-react-native';
+import { ChevronLeft, User, LogOut, Bell, Shield, Smartphone, Code } from 'lucide-react-native';
 import { authService } from '../services/auth';
+import { sessionApi } from '../services/api'; // Added import
+import { useAlert } from '../context/AlertContext';
 
 export default function AccountsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
     const [user, setUser] = useState(null);
+    const { showAlert } = useAlert();
 
     useEffect(() => {
         loadUser();
@@ -17,26 +20,65 @@ export default function AccountsScreen({ navigation }) {
         setUser(userData);
     };
 
+    const performLogout = async () => {
+        await authService.logout();
+        // Reset navigation stack to Splash, which will likely redirect to Login
+        navigation.reset({
+            index: 0,
+            routes: [{ name: 'Splash' }],
+        });
+    };
+
     const handleLogout = async () => {
-        Alert.alert(
-            "Logout",
-            "Are you sure you want to logout?",
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Logout",
-                    style: "destructive",
-                    onPress: async () => {
-                        await authService.logout();
-                        // Reset navigation stack to Splash, which will likely redirect to Login
-                        navigation.reset({
-                            index: 0,
-                            routes: [{ name: 'Splash' }],
-                        });
-                    }
+        const currentUser = await authService.getUser();
+        const userId = currentUser?.id || currentUser?.userId || currentUser?.email;
+        let activeSessionId = null;
+
+        if (userId) {
+            try {
+                const session = await sessionApi.getActiveSession(userId);
+                if (session && session.status === 'ACTIVE') {
+                    activeSessionId = session.sessionId;
                 }
-            ]
-        );
+            } catch (e) {
+                console.warn("Error checking session during logout:", e);
+            }
+        }
+
+        if (activeSessionId) {
+            showAlert(
+                "Active Session Detected",
+                "You have an ongoing charging session. Logging out will STOP this session automatically. Do you want to proceed?",
+                [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                        text: "Stop & Logout",
+                        style: "destructive",
+                        onPress: async () => {
+                            try {
+                                await sessionApi.stopSession(activeSessionId);
+                            } catch (e) {
+                                console.warn("Failed to stop session on logout", e);
+                            }
+                            await performLogout();
+                        }
+                    }
+                ]
+            );
+        } else {
+            showAlert(
+                "Logout",
+                "Are you sure you want to logout?",
+                [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                        text: "Logout",
+                        style: "destructive",
+                        onPress: performLogout
+                    }
+                ]
+            );
+        }
     };
 
     const SettingItem = ({ icon: Icon, title, subtitle, onPress, isDestructive = false }) => (
@@ -103,6 +145,8 @@ export default function AccountsScreen({ navigation }) {
                         <SettingItem icon={Smartphone} title="Device Preferences" subtitle="Theme, Language" onPress={() => { }} />
                     </View>
                 </View>
+
+
 
                 {/* Logout Button */}
                 <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>

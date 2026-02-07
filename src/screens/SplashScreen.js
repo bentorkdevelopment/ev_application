@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react'
-import { View, Image, StyleSheet, Dimensions, Animated, Easing, StatusBar } from 'react-native'
+import { View, Image, StyleSheet, Dimensions, Animated, Easing, StatusBar, Platform, Linking } from 'react-native'
 import Svg, { Path, G } from 'react-native-svg'
 import { authService } from '../services/auth';
+import SpInAppUpdates, { IAUUpdateKind } from 'sp-react-native-in-app-updates';
 
 const { width, height } = Dimensions.get('window')
 
@@ -140,18 +141,98 @@ export default function SplashScreen({ navigation } = {}) {
         }).start()
 
         const checkAuth = async () => {
-            // Wait for 2 seconds minimal splash time (or however long the animation needs to feel good)
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Start the minimum splash timer
+            const minSplashTime = new Promise(resolve => setTimeout(resolve, 2000));
 
-            const token = await authService.getToken();
+            // Failsafe: Force navigation after 8 seconds if nothing else happens
+            const safetyTimeout = setTimeout(() => {
+                console.warn("Splash Screen Timeout - Forcing Navigation");
+                handleNavigation();
+            }, 8000);
 
-            if (navigation) {
-                if (token) {
-                    navigation.replace('Home');
-                } else {
-                    navigation.replace('Login');
+            const handleNavigation = async () => {
+                try {
+                    clearTimeout(safetyTimeout); // Clear the failsafe if we get here normally
+
+                    if (!navigation) {
+                        console.error("Navigation prop is missing in SplashScreen");
+                        return;
+                    }
+
+                    const token = await authService.getToken();
+
+                    if (deepLinkChargerId) {
+                        const configParams = {
+                            chargerId: deepLinkChargerId,
+                            boxId: deepLinkChargerId,
+                            stationName: 'Bentork Charger',
+                            status: 'Available'
+                        };
+
+                        if (token) {
+                            navigation.replace('Config', configParams);
+                        } else {
+                            navigation.replace('Login', {
+                                postLoginTarget: 'Config',
+                                postLoginParams: configParams
+                            });
+                        }
+                    } else if (token) {
+                        navigation.replace('Home');
+                    } else {
+                        navigation.replace('Login');
+                    }
+                } catch (navError) {
+                    console.error("Navigation logic failed:", navError);
+                    // Last resort fallback
+                    if (navigation) navigation.replace('Login');
+                }
+            };
+
+            // Check for In-App Updates (Android only for Immediate)
+            if (Platform.OS === 'android') {
+                try {
+                    const inAppUpdates = new SpInAppUpdates(false); // isDebug=false
+                    // Add a timeout to the update check so it doesn't freeze the app
+                    const updateCheckPromise = inAppUpdates.checkNeedsUpdate();
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Update check timeout')), 3000));
+
+                    const result = await Promise.race([updateCheckPromise, timeoutPromise]);
+
+                    if (result.shouldUpdate) {
+                        await inAppUpdates.startUpdate({
+                            updateType: IAUUpdateKind.IMMEDIATE,
+                        });
+                        return; // Stop here if updating
+                    }
+                } catch (error) {
+                    console.log('In-App Update check failed or timed out:', error);
+                    // Proceed even if update check fails
                 }
             }
+
+            // Ensure we wait for the minimum splash time
+            await minSplashTime;
+
+            // Check for Deep Link
+            let deepLinkChargerId = null;
+            try {
+                const initialUrl = await Linking.getInitialURL();
+                if (initialUrl) {
+                    const parts = initialUrl.split('/splash/');
+                    if (parts.length > 1) {
+                        let id = parts[1];
+                        id = id.split('?')[0].split('#')[0];
+                        if (id.endsWith('/')) id = id.slice(0, -1);
+                        if (id) deepLinkChargerId = id;
+                    }
+                }
+            } catch (linkError) {
+                console.warn("Deep link check failed:", linkError);
+            }
+
+            // Proceed to navigation
+            await handleNavigation();
         };
 
         checkAuth();
