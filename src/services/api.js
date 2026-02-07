@@ -147,6 +147,14 @@ export const authApi = {
         } catch (error) {
             throw error;
         }
+    },
+    register: async (userData) => {
+        try {
+            const response = await publicApi.post('/user/signup', userData);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
     }
 };
 
@@ -331,18 +339,30 @@ export const sessionApi = {
             const sessions = Array.isArray(data) ? data : (data?.data || []);
 
             if (Array.isArray(sessions)) {
-                // Find all ACTIVE sessions for this user
+                console.log(`[DEBUG] Found ${sessions.length} total sessions from backend.`);
+
                 const activeSessions = sessions.filter(s => {
-                    const matchesUser = (s.user?.id == userId || s.userId == userId);
+                    // Normalization
                     const status = String(s.status || '').toUpperCase();
-                    // STRICTER STATUS CHECK: Only truly active states to avoid stale 'INITIATED' ghosts
-                    const isActive = ['ACTIVE', 'CHARGING'].includes(status);
+                    const sUserId = s.userId;
+                    const sUserEmail = s.user?.email; // Sometimes user is object
+                    const sUserObjId = s.user?.id;
 
-                    // Reject sessions with invalid start times (prevents 1970 duration bug)
-                    const hasValidTime = s.startTime && s.startTime !== 0; // null, undefined, or 0 are invalid
+                    // Check both ID and Email/String ID
+                    // The 'userId' param passed in might be an ID (123) or email (om.lok...)
+                    // We need loose comparison (==) for IDs
+                    const matchesUser = (sUserObjId == userId || sUserId == userId || sUserEmail === userId);
+                    const isActive = ['ACTIVE', 'CHARGING', 'STARTED'].includes(status);
 
-                    return matchesUser && isActive && hasValidTime;
+                    if (matchesUser) {
+                        console.log(`[DEBUG] User Match! Session ${s.id}: Status=${status}, IsActive=${isActive}`);
+                    }
+
+                    // Strict check: User match + Status match
+                    return matchesUser && isActive;
                 });
+
+                console.log(`[DEBUG] Active sessions for user ${userId}: ${activeSessions.length}`);
 
                 // Sort by ID descending to get the LATEST session
                 activeSessions.sort((a, b) => b.id - a.id);
@@ -350,17 +370,26 @@ export const sessionApi = {
                 const activeSession = activeSessions[0];
 
                 if (activeSession) {
-                    console.log("Found Active Session for User", userId, ":", activeSession.id);
+                    console.log(`Found Active Session ID: ${activeSession.id}, Status: ${activeSession.status}`);
+
+                    // Parse LocalDateTime array [2024, 5, 20, 10, 30, 45] -> Timestamp
+                    let startTimeTs = Date.now();
+                    if (Array.isArray(activeSession.startTime)) {
+                        const [y, m, d, h, min, s] = activeSession.startTime;
+                        startTimeTs = new Date(y, m - 1, d, h, min, s || 0).getTime();
+                    } else if (activeSession.startTime) {
+                        startTimeTs = new Date(activeSession.startTime).getTime();
+                    }
+
                     return {
                         sessionId: activeSession.id,
-                        status: 'ACTIVE', // Normalized for frontend check
-                        chargerId: activeSession.charger?.id || activeSession.chargerId,
+                        status: 'ACTIVE',
+                        chargerId: activeSession.charger?.id, // Accessing Charger entity
                         boxId: activeSession.boxId,
-                        stationName: activeSession.charger?.station?.name || activeSession.stationName || "Unknown Station",
-                        startTime: activeSession.startTime,
-                        // Fix for Percentage Logic on Resume:
-                        selectedKwh: activeSession.selectedKwh || activeSession.targetEnergy || activeSession.energyLimit || null,
-                        planId: activeSession.planId || activeSession.plan?.id || null,
+                        stationName: activeSession.stationName || activeSession.charger?.station?.name || activeSession.charger?.name || "Unknown Station",
+                        startTime: startTimeTs,
+                        selectedKwh: activeSession.selectedKwh || null, // Not in Session model? Check Receipt/Plan relation if needed later
+                        planId: null, // Session model doesn't directly link Plan, might need derived logic or ignored for now
                         rate: activeSession.charger?.rate || 0,
                         chargerType: activeSession.charger?.chargerType || 'Fast'
                     };
@@ -383,13 +412,65 @@ export const sessionApi = {
 };
 
 export const notificationApi = {
-    getUnreadCount: async (userId) => {
+    registerFcmToken: async (userId, token) => {
+        if (!userId || String(userId) === 'undefined') return null;
         try {
-            const response = await api.get(`/notifications/unread-count/${userId}`);
-            return response.data; // Expecting { count: 5 } or just number
+            const response = await api.post(`/notifications/user/${userId}/fcm-token`, { token });
+            return response.data;
         } catch (error) {
-            // console.warn("Notification Count Error", error); // Suppress log spam
-            return 0; // Fallback
+            console.warn("Register FCM Token Failed:", error.message);
+            throw error;
+        }
+    },
+    getAllNotifications: async (userId) => {
+        if (!userId || String(userId) === 'undefined') return [];
+        try {
+            const response = await api.get(`/notifications/user/${userId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getUnreadNotifications: async (userId) => {
+        if (!userId || String(userId) === 'undefined') return [];
+        try {
+            const response = await api.get(`/notifications/user/${userId}/unread`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    sendNotification: async (userId, notificationData) => {
+        if (!userId || String(userId) === 'undefined') throw new Error("User ID required");
+        try {
+            const response = await api.post(`/notifications/user/${userId}`, notificationData);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    markAsRead: async (notificationId) => {
+        try {
+            const response = await api.post(`/notifications/${notificationId}/read`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getUnreadCount: async (userId) => {
+        if (!userId || String(userId) === 'undefined') return 0;
+        try {
+            // Using the /unread endpoint to get the count
+            const response = await api.get(`/notifications/user/${userId}/unread`);
+            const data = response.data;
+            if (Array.isArray(data)) {
+                return data.length;
+            }
+            if (typeof data === 'number') return data;
+            if (data && typeof data.count === 'number') return data.count;
+            return 0;
+        } catch (error) {
+            return 0;
         }
     }
 };

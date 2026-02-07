@@ -26,14 +26,14 @@ export default function InvoiceScreen({ navigation, route }) {
     const timeStr = dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
     // Duration formatting
-    const durationSeconds = finalDuration || sessionData?.duration || 0;
+    const durationSeconds = parseFloat(finalDuration) || parseFloat(sessionData?.duration) || 0;
     const hrs = Math.floor(durationSeconds / 3600);
     const mins = Math.floor((durationSeconds % 3600) / 60);
     const durationStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} mins`;
 
     // Metrics
     const energy = Number(finalEnergy || sessionData?.energyUsed || 0).toFixed(2);
-    const rate = Number(sessionData?.rate || paramRate || 15).toFixed(2);
+    const rate = Number(sessionData?.rate ?? paramRate ?? 15).toFixed(2);
 
     // Charger Type
     const displayChargerType = sessionData?.chargerType || paramChargerType || "DC Fast";

@@ -4,7 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Zap, Flag, Bell, X, Info, ChevronDown, Coffee, Utensils, ShoppingBag, MapPin } from 'lucide-react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { sessionApi } from '../services/api';
+import placesService from '../services/placesService';
 import { useAlert } from '../context/AlertContext';
+import { MOCK_CAFES } from '../data/mockCafes';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -43,12 +45,70 @@ export default function SessionScreen({ navigation, route }) {
     const startTimeRef = useRef(Date.now());
     const isStoppingRef = useRef(false);
 
-    // Nearby Places Data
-    const nearbyPlaces = [
-        { id: 1, name: 'Starbucks Coffee', type: 'Cafe', distance: '200m', rating: '4.5', icon: Coffee, color: '#A0522D' },
-        { id: 2, name: 'Green Leaf Restro', type: 'Dining', distance: '350m', rating: '4.2', icon: Utensils, color: '#4CAF50' },
-        { id: 3, name: 'Central Plaza', type: 'Mall', distance: '800m', rating: '4.7', icon: ShoppingBag, color: '#E91E63' }
-    ];
+    // Dynamic Nearby Places State
+    const [nearbyPlaces, setNearbyPlaces] = useState([]);
+    const [cityIndex, setCityIndex] = useState(0); // For switching cafe sets (0=Pune, 1=Mumbai, etc)
+
+
+    useEffect(() => {
+        fetchRealNearbyPlaces();
+    }, [cityIndex]);
+
+    const fetchRealNearbyPlaces = async () => {
+        try {
+            // Load from Mock Data based on City Index
+            const places = MOCK_CAFES[cityIndex] || [];
+
+            if (!places || places.length === 0) {
+                console.log("No mock places found.");
+                generateFallbackPlaces();
+                return;
+            }
+
+            // Process places to add UI metadata (Icon, Color, Type label)
+            const formattedPlaces = places.map((p) => {
+                let icon = Coffee;
+                let color = '#FFA500'; // Default Orange
+                let typeLabel = 'Cafe';
+
+                const nameLower = (p.name || '').toLowerCase();
+
+                // Simple heuristic for icon/color based on types/name
+                if (nameLower.includes('pizza') || nameLower.includes('burger') || nameLower.includes('restaurant') || nameLower.includes('dining')) {
+                    icon = Utensils;
+                    color = '#FF4213';
+                } else if (nameLower.includes('mart') || nameLower.includes('store') || nameLower.includes('shop')) {
+                    icon = ShoppingBag;
+                    color = '#9C27B0';
+                }
+
+                return {
+                    ...p,
+                    icon: icon,
+                    color: color,
+                    type: typeLabel,
+                    distance: p.vicinity || 'Nearby',
+                    latitude: p.geometry?.location?.lat,
+                    longitude: p.geometry?.location?.lng
+                };
+            });
+
+            setNearbyPlaces(formattedPlaces);
+
+        } catch (error) {
+            console.warn("Failed to fetch nearby places for Session:", error);
+            generateFallbackPlaces();
+        }
+    };
+
+    const generateFallbackPlaces = () => {
+        // Keep a small fallback just in case API fails
+        const places = [
+            { id: 1, name: 'Local Cafe', icon: Coffee, color: '#795548', type: 'Coffee', distance: '100m', rating: 4.5 },
+            { id: 2, name: 'Convenience Store', icon: ShoppingBag, color: '#FF9800', type: 'Shopping', distance: '150m', rating: 4.0 },
+        ];
+        setNearbyPlaces(places);
+    };
 
     // Notification Permission Request
     useEffect(() => {
@@ -179,30 +239,39 @@ export default function SessionScreen({ navigation, route }) {
             // Start with warmup
             setIsInitializing(true);
 
-            // Cycle through messages
+            if (!chargerId || !boxId) {
+                showAlert("Error", "Missing charger information.", [
+                    { text: "OK", onPress: () => navigation.goBack() }
+                ]);
+                setIsInitializing(false);
+                return;
+            }
+
+            // TRIGGER API IN PARALLEL
+            // We start the request but don't await it yet. This allows hardware to warm up while animation plays.
+            const sessionStartPromise = sessionApi.startSession({
+                chargerId,
+                boxId,
+                planId,
+                selectedKwh
+            }).catch(err => ({ error: err })); // Catch errors to allow animation to finish gracefully
+
+            // Cycle through messages (Warmup Animation)
+            // Total time: 4 messages * 2200ms = 8.8 seconds (Matches hardware warmup time)
             for (let i = 0; i < loadingMessages.length; i++) {
                 if (!isMounted) return;
                 setLoadingMessage(loadingMessages[i]);
                 setMessageIndex(i);
-                await new Promise(r => setTimeout(r, 800)); // 800ms per message
+                await new Promise(r => setTimeout(r, 2200));
             }
 
             try {
-                if (!chargerId || !boxId) {
-                    showAlert("Error", "Missing charger information.", [
-                        { text: "OK", onPress: () => navigation.goBack() }
-                    ]);
-                    setIsInitializing(false);
-                    return;
-                }
+                // Await result after animation
+                const startResponse = await sessionStartPromise;
 
-                // 1. Start Session
-                const startResponse = await sessionApi.startSession({
-                    chargerId,
-                    boxId,
-                    planId,
-                    selectedKwh
-                });
+                if (startResponse.error) {
+                    throw startResponse.error;
+                }
 
                 if (startResponse && startResponse.sessionId) {
                     setSessionId(startResponse.sessionId);
@@ -215,7 +284,7 @@ export default function SessionScreen({ navigation, route }) {
             } catch (error) {
                 console.error("Session Start Error:", error);
                 showAlert("Failed", error.userMessage || "Could not start charging session", [
-                    { text: "OK", onPress: () => navigation.goBack() }
+                    { text: "OK", onPress: () => navigation.navigate('Home') } // Go Home on failure
                 ]);
             } finally {
                 if (isMounted) setIsInitializing(false);
@@ -381,13 +450,13 @@ export default function SessionScreen({ navigation, route }) {
         }
     };
 
-    const handlePlaceDirection = (placeName) => {
+    const handlePlaceDirection = (place) => {
         const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
-        // const latLng = ``; // Fallback to query
-        const label = placeName;
+        const latLng = `${place.latitude},${place.longitude}`;
+        const label = place.name;
         const url = Platform.select({
-            ios: `${scheme}${label}`,
-            android: `${scheme}0,0?q=${label}`
+            ios: `${scheme}${label}@${latLng}`,
+            android: `${scheme}${latLng}(${label})`
         });
         Linking.openURL(url);
     };
@@ -562,16 +631,16 @@ export default function SessionScreen({ navigation, route }) {
                                 <TouchableOpacity
                                     key={place.id}
                                     style={styles.amenityCard}
-                                    onPress={() => handlePlaceDirection(place.name)}
+                                    onPress={() => handlePlaceDirection(place)}
                                 >
                                     <View style={[styles.amenityIconBox, { backgroundColor: `${place.color}20` }]}>
                                         <place.icon size={20} color={place.color} />
                                     </View>
                                     <View style={styles.amenityInfo}>
-                                        <Text style={styles.amenityName}>{place.name}</Text>
+                                        <Text style={styles.amenityName} numberOfLines={1}>{place.name}</Text>
                                         <View style={styles.amenityMeta}>
                                             <Text style={styles.amenityDistance}>{place.distance}</Text>
-                                            <Text style={styles.amenityType}>• {place.type}</Text>
+                                            <Text style={styles.amenityType}>• {place.rating} ★</Text>
                                         </View>
                                     </View>
                                     <View style={styles.goBtn}>

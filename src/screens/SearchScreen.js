@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, StatusBar } from 'react-native';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, StatusBar, Animated, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter } from 'lucide-react-native';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { stationsApi, chargersApi } from '../services/api'; // Added chargersApi
+import StationBottomSheet from '../components/StationBottomSheet'; // Added StationBottomSheet
+
+// Categories Constant
 const CATEGORIES = [
     { id: '1', name: 'Fast Charging', icon: Zap },
     { id: '2', name: 'Restaurants', icon: Coffee },
@@ -10,27 +15,195 @@ const CATEGORIES = [
     { id: '4', name: '24/7 Open', icon: Clock },
 ];
 
-const RECENT_SEARCHES = [
-    { id: '1', text: 'Connaught Place' },
-    { id: '2', text: 'Cyber Hub, Gurgaon' },
-    { id: '3', text: 'MG Road' },
-];
+const RECENT_SEARCHES_KEY = '@recent_searches';
 
-const POPULAR_LOCATIONS = [
-    { id: '1', name: 'DLF Mall of India', address: 'Sector 18, Noida', distance: '2.5 km', rating: 4.8 },
-    { id: '2', name: 'Ambience Mall', address: 'Vasant Kunj, Delhi', distance: '5.2 km', rating: 4.5 },
-    { id: '3', name: 'Pacific Mall', address: 'Tagore Garden, Delhi', distance: '8.0 km', rating: 4.2 },
-];
+const StationItem = ({ station, index, onPress }) => { // Added onPress prop
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const scaleAnim = useRef(new Animated.Value(0.8)).current;
+
+    useEffect(() => {
+        // Stagger the first 10 items, then animate subsequent items immediately on mount (scroll)
+        const delay = index < 10 ? index * 100 : 0;
+
+        Animated.parallel([
+            Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 250,
+                delay: delay,
+                useNativeDriver: true,
+            }),
+            Animated.timing(scaleAnim, {
+                toValue: 1,
+                duration: 250,
+                delay: delay,
+                useNativeDriver: true,
+            }),
+        ]).start();
+    }, []);
+
+    return (
+        <Animated.View
+            style={{
+                opacity: fadeAnim,
+                transform: [{ scale: scaleAnim }],
+            }}
+        >
+            <TouchableOpacity style={styles.stationCard} onPress={() => onPress(station)}>
+                <View style={styles.stationIconContainer}>
+                    <Zap size={20} color="#39E29B" />
+                </View>
+                <View style={styles.stationInfo}>
+                    <Text style={styles.stationName}>{station.name}</Text>
+                    <View style={styles.stationAddressRow}>
+                        <MapPin size={12} color="#888" />
+                        <Text style={styles.stationAddress}>
+                            {station.locationName || 'Unknown Location'}
+                        </Text>
+                    </View>
+                    <Text style={{ color: '#666', fontSize: 11, marginTop: 2 }}>
+                        Status: <Text style={{ color: station.status === 'ACTIVE' ? '#39E29B' : '#FF6B6B' }}>{station.status}</Text>
+                    </Text>
+                </View>
+                <View style={styles.stationRight}>
+                    <Text style={styles.distanceText}>
+                        {/* Mock distance/rating as it's not in StationDTO */}
+                        - km
+                    </Text>
+                    <View style={styles.ratingBadge}>
+                        <Text style={styles.ratingText}>★ 4.5</Text>
+                    </View>
+                </View>
+            </TouchableOpacity>
+        </Animated.View>
+    );
+};
 
 export default function SearchScreen({ navigation }) {
     const insets = useSafeAreaInsets();
     const [searchText, setSearchText] = useState('');
+    const [recentSearches, setRecentSearches] = useState([]);
+    const [isFilterVisible, setFilterVisible] = useState(false);
     const [activeCategory, setActiveCategory] = useState(null);
+    const [stations, setStations] = useState([]);
+    const [allChargers, setAllChargers] = useState([]); // Added chargers state
+    const [selectedStation, setSelectedStation] = useState(null); // Added selectedStation
+    const [isSheetVisible, setIsSheetVisible] = useState(false); // Added sheet visibility
+    const [loading, setLoading] = useState(true);
 
-    return (
-        <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor="#121212" />
+    useEffect(() => {
+        loadStations();
+        loadRecentSearches();
+    }, []);
 
+    const loadRecentSearches = async () => {
+        try {
+            const saved = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
+            if (saved) {
+                setRecentSearches(JSON.parse(saved));
+            }
+        } catch (error) {
+            console.log('Error loading recent searches:', error);
+        }
+    };
+
+    const addRecentSearch = async (text) => {
+        if (!text.trim()) return;
+        const newSearch = { id: Date.now().toString(), text: text.trim() };
+
+        // Remove duplicates and keep top 5
+        const updated = [newSearch, ...recentSearches.filter(s => s.text.toLowerCase() !== text.trim().toLowerCase())].slice(0, 5);
+
+        setRecentSearches(updated);
+        await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+    };
+
+    const removeRecentSearch = async (id) => {
+        const updated = recentSearches.filter(s => s.id !== id);
+        setRecentSearches(updated);
+        await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+    };
+
+    const clearAllRecentSearches = async () => {
+        setRecentSearches([]);
+        await AsyncStorage.removeItem(RECENT_SEARCHES_KEY);
+    };
+
+    const loadStations = async () => {
+        try {
+            setLoading(true);
+            const [stationsData, chargersData] = await Promise.all([
+                stationsApi.getAllStations(),
+                chargersApi.getAllChargers().catch(e => [])
+            ]);
+            console.log('Fetched stations:', stationsData.length);
+            setStations(stationsData);
+            setAllChargers(Array.isArray(chargersData) ? chargersData : (chargersData?.chargers || []));
+        } catch (error) {
+            console.error('Failed to load stations:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const filteredStations = useMemo(() => {
+        let result = stations;
+        const query = searchText.toLowerCase();
+
+        // 1. Text Filter
+        if (query) {
+            result = result.filter(station =>
+                (station.name?.toLowerCase() || '').includes(query) ||
+                (station.locationName?.toLowerCase() || '').includes(query)
+            );
+        }
+
+        // 2. Category Filter (Mock Logic as backend data might not have these tags yet)
+        if (activeCategory) {
+            // For now, if 'Fast Charging' is selected, we could filter by rate > 50 if available, 
+            // but since data is limited, we will just simulate filtering or show all if logic is missing.
+            // Example real logic:
+            // if (activeCategory === '1') result = result.filter(s => s.chargers?.some(c => c.rate >= 50));
+        }
+
+        return result;
+    }, [stations, searchText, activeCategory]);
+
+    const handleSearchSubmit = () => {
+        addRecentSearch(searchText);
+    };
+
+    const handleStationPress = (station) => {
+        console.log('Station pressed:', station?.name);
+        setSelectedStation(station);
+        setIsSheetVisible(true);
+    };
+
+    const handleSelectCharger = (charger) => {
+        setIsSheetVisible(false);
+
+        const typeStr = (charger.chargerType || charger.type || '').toString().toUpperCase();
+        const isAC = typeStr.includes('AC');
+        const fallbackConnector = isAC ? 'Type 2' : 'CCS 2';
+
+        navigation.navigate('Config', {
+            stationId: selectedStation?.id,
+            stationName: selectedStation?.name,
+            chargerId: charger.id || charger.charger_id || 'Unknown',
+            boxId: charger.ocppId || charger.ocpp_id || 'Unknown',
+            chargerType: charger.chargerType || charger.type || 'Fast',
+            maxPower: charger.max_power || charger.rate || 'Unknown',
+            connectorType: charger.connectorType || charger.connectorType || fallbackConnector,
+            status: (charger.status === 'Available' || (!charger.occupied && charger.availability)) ? 'Available' : (charger.status || 'Busy')
+        });
+    };
+
+    const handleCloseBottomSheet = () => {
+        setIsSheetVisible(false);
+    };
+
+
+    const renderHeader = () => (
+        <View>
             {/* Header Area */}
             <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <View style={styles.headerTop}>
@@ -52,6 +225,8 @@ export default function SearchScreen({ navigation }) {
                         placeholderTextColor="#666"
                         value={searchText}
                         onChangeText={setSearchText}
+                        onSubmitEditing={handleSearchSubmit}
+                        returnKeyType="search"
                         autoFocus={false}
                     />
                     {searchText.length > 0 && (
@@ -59,92 +234,132 @@ export default function SearchScreen({ navigation }) {
                             <X size={16} color="#fff" />
                         </TouchableOpacity>
                     )}
-                    <TouchableOpacity style={styles.filterBtn}>
-                        <Filter size={20} color="#fff" />
+                    <TouchableOpacity
+                        style={[styles.filterBtn, activeCategory && { backgroundColor: 'rgba(57, 226, 155, 0.2)' }]}
+                        onPress={() => setFilterVisible(true)}
+                    >
+                        <Filter size={20} color={activeCategory ? "#39E29B" : "#fff"} />
                     </TouchableOpacity>
                 </View>
             </View>
 
-            <ScrollView
-                contentContainerStyle={styles.scrollContent}
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-            >
-                {/* Categories */}
-                <Text style={styles.sectionTitle}>Categories</Text>
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.categoriesScroll}
-                    contentContainerStyle={styles.categoriesContent}
-                >
-                    {CATEGORIES.map((cat) => {
-                        const Icon = cat.icon;
-                        const isActive = activeCategory === cat.id;
-                        return (
-                            <TouchableOpacity
-                                key={cat.id}
-                                style={[styles.categoryChip, isActive && styles.categoryChipActive]}
-                                onPress={() => setActiveCategory(isActive ? null : cat.id)}
-                            >
-                                <Icon size={16} color={isActive ? "#000" : "#fff"} style={{ marginRight: 6 }} />
-                                <Text style={[styles.categoryText, isActive && styles.categoryTextActive]}>{cat.name}</Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </ScrollView>
-
-                {/* Recent Searches */}
-                {RECENT_SEARCHES.length > 0 && (
-                    <View style={styles.sectionContainer}>
-                        <View style={styles.sectionHeader}>
-                            <Text style={styles.sectionTitle}>Recent Searches</Text>
-                            <TouchableOpacity>
-                                <Text style={styles.clearAllText}>Clear All</Text>
-                            </TouchableOpacity>
-                        </View>
-                        {RECENT_SEARCHES.map((item) => (
-                            <TouchableOpacity key={item.id} style={styles.recentItem}>
-                                <View style={styles.recentLeft}>
-                                    <Clock size={16} color="#666" />
-                                    <Text style={styles.recentText}>{item.text}</Text>
-                                </View>
-                                <TouchableOpacity>
-                                    <X size={16} color="#444" />
-                                </TouchableOpacity>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                )}
-
-                {/* Popular / Results */}
+            {/* Recent Searches - Only show if no search text and list is not empty */}
+            {searchText.length === 0 && recentSearches.length > 0 && (
                 <View style={styles.sectionContainer}>
-                    <Text style={styles.sectionTitle}>Popular Stations</Text>
-                    {POPULAR_LOCATIONS.map((station) => (
-                        <TouchableOpacity key={station.id} style={styles.stationCard}>
-                            <View style={styles.stationIconContainer}>
-                                <Zap size={20} color="#39E29B" />
+                    <View style={styles.sectionHeader}>
+                        <Text style={styles.sectionTitle}>Recent Searches</Text>
+                        <TouchableOpacity onPress={clearAllRecentSearches}>
+                            <Text style={styles.clearAllText}>Clear All</Text>
+                        </TouchableOpacity>
+                    </View>
+                    {recentSearches.map((item) => (
+                        <TouchableOpacity
+                            key={item.id}
+                            style={styles.recentItem}
+                            onPress={() => {
+                                setSearchText(item.text);
+                                addRecentSearch(item.text); // Move to top logic
+                            }}
+                        >
+                            <View style={styles.recentLeft}>
+                                <Clock size={16} color="#666" />
+                                <Text style={styles.recentText}>{item.text}</Text>
                             </View>
-                            <View style={styles.stationInfo}>
-                                <Text style={styles.stationName}>{station.name}</Text>
-                                <View style={styles.stationAddressRow}>
-                                    <MapPin size={12} color="#888" />
-                                    <Text style={styles.stationAddress}>{station.address}</Text>
-                                </View>
-                            </View>
-                            <View style={styles.stationRight}>
-                                <Text style={styles.distanceText}>{station.distance}</Text>
-                                <View style={styles.ratingBadge}>
-                                    <Text style={styles.ratingText}>★ {station.rating}</Text>
-                                </View>
-                            </View>
+                            <TouchableOpacity onPress={() => removeRecentSearch(item.id)}>
+                                <X size={16} color="#444" />
+                            </TouchableOpacity>
                         </TouchableOpacity>
                     ))}
                 </View>
+            )}
 
-                {/* Bottom Padding */}
-                <View style={{ height: 40 }} />
-            </ScrollView>
+            <View style={styles.sectionContainer}>
+                <Text style={[styles.sectionTitle, { marginLeft: 0 }]}>
+                    {searchText.length > 0 ? 'Search Results' : 'All Stations'}
+                </Text>
+            </View>
+        </View>
+    );
+
+    return (
+        <View style={styles.container}>
+            <StatusBar barStyle="light-content" backgroundColor="#121212" />
+
+            <FlatList
+                data={filteredStations}
+                renderItem={({ item, index }) => <StationItem station={item} index={index} onPress={handleStationPress} />}
+                keyExtractor={(item) => item.id.toString()}
+                ListHeaderComponent={renderHeader}
+                ListEmptyComponent={
+                    !loading && (
+                        <Text style={{ color: '#666', textAlign: 'center', marginTop: 20 }}>No stations found</Text>
+                    )
+                }
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                ListFooterComponent={<View style={{ height: 40 }} />}
+            />
+
+            {/* Filter Modal */}
+            <Modal
+                transparent={true}
+                visible={isFilterVisible}
+                animationType="fade"
+                onRequestClose={() => setFilterVisible(false)}
+            >
+                <TouchableOpacity
+                    style={styles.modalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setFilterVisible(false)}
+                >
+                    <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Filter Stations</Text>
+                            <TouchableOpacity onPress={() => setFilterVisible(false)}>
+                                <X size={24} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text style={styles.modalLabel}>Categories</Text>
+                        <View style={styles.modalCategories}>
+                            {CATEGORIES.map((cat) => {
+                                const Icon = cat.icon;
+                                const isActive = activeCategory === cat.id;
+                                return (
+                                    <TouchableOpacity
+                                        key={cat.id}
+                                        style={[styles.categoryChip, styles.modalCategoryChip, isActive && styles.categoryChipActive]}
+                                        onPress={() => {
+                                            setActiveCategory(isActive ? null : cat.id);
+                                            // Optional: Close modal on selection? 
+                                            // setFilterVisible(false);
+                                        }}
+                                    >
+                                        <Icon size={16} color={isActive ? "#000" : "#fff"} style={{ marginRight: 6 }} />
+                                        <Text style={[styles.categoryText, isActive && styles.categoryTextActive]}>{cat.name}</Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+
+                        <TouchableOpacity
+                            style={styles.applyBtn}
+                            onPress={() => setFilterVisible(false)}
+                        >
+                            <Text style={styles.applyBtnText}>Apply Filters</Text>
+                        </TouchableOpacity>
+                    </View>
+                </TouchableOpacity>
+            </Modal>
+
+            <StationBottomSheet
+                station={selectedStation}
+                chargers={allChargers}
+                visible={isSheetVisible}
+                onClose={handleCloseBottomSheet}
+                onSelectCharger={handleSelectCharger}
+            />
         </View>
     );
 }
@@ -342,5 +557,54 @@ const styles = StyleSheet.create({
         color: '#FFD700',
         fontSize: 11,
         fontWeight: '600',
+    },
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+    },
+    modalContent: {
+        backgroundColor: '#1E1E1E',
+        borderRadius: 20,
+        padding: 24,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 24,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#fff',
+    },
+    modalLabel: {
+        fontSize: 16,
+        color: '#888',
+        marginBottom: 12,
+        fontWeight: '600',
+    },
+    modalCategories: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginBottom: 24,
+    },
+    modalCategoryChip: {
+        marginBottom: 4,
+    },
+    applyBtn: {
+        backgroundColor: '#39E29B',
+        paddingVertical: 14,
+        borderRadius: 14,
+        alignItems: 'center',
+    },
+    applyBtnText: {
+        color: '#000',
+        fontSize: 16,
+        fontWeight: 'bold',
     },
 });

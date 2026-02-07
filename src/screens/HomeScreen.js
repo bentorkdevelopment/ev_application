@@ -5,20 +5,22 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 // Custom Icons
 import SearchIcon from '../assets/icons/Outlined/search_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
 import HelpIcon from '../assets/icons/Outlined/help_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
-import NavigationIcon from '../assets/icons/Outlined/navigation_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
-import ShareIcon from '../assets/icons/Rounded Fill/share_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg'; // Rounded Fill as per availability
+import NavigationIcon from '../assets/icons/Rounded Fill/navigation_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
+import ShareIcon from '../assets/icons/Rounded Fill/share_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
 import HomeIcon from '../assets/icons/Outlined/home_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg';
 import LibraryIcon from '../assets/icons/Outlined/library_books_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg';
 import ScanIcon from '../assets/icons/Rounded Fill/qr_code_scanner_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
 import WalletIcon from '../assets/icons/Outlined/wallet_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
 import BellIcon from '../assets/icons/Outlined/notifications_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz48.svg';
 import MapPinIcon from '../assets/icons/Outlined/location_on_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg';
-import BoltIcon from '../assets/icons/Outlined/bolt_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg'; // If needed for Zap in nav item? No, Nav item is Scan now.
+import BoltIcon from '../assets/icons/Rounded Fill/bolt_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
 
 import { Colors } from '../styles/GlobalStyles';
+import { ChevronRight } from 'lucide-react-native';
 
 import LibraryScreen from './LibraryScreen';
 import StationBottomSheet from '../components/StationBottomSheet';
+import StationCardSkeleton from '../components/StationCardSkeleton';
 import { stationsApi, locationsApi, chargersApi, sessionApi, notificationApi } from '../services/api';
 import { authService } from '../services/auth';
 import { useAlert } from '../context/AlertContext';
@@ -54,10 +56,26 @@ export default function HomeScreenMain({ navigation, route }) {
     const [isSheetVisible, setIsSheetVisible] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [activeResumeSession, setActiveResumeSession] = useState(null);
+    const [isSessionCheckComplete, setIsSessionCheckComplete] = useState(false); // Validating session
     const [unreadCount, setUnreadCount] = useState(0); // State for notifications
+    const [showSkeleton, setShowSkeleton] = useState(true);
+    const skeletonOpacity = useRef(new Animated.Value(1)).current;
+    const contentOpacity = useRef(new Animated.Value(0)).current;
+    const bottomUiFade = useRef(new Animated.Value(0)).current; // For fade-in animation
     const mapRef = useRef(null);
 
     const isFetchingRef = useRef(false);
+
+    // Fade In Bottom UI when ready
+    useEffect(() => {
+        if (!isLoading && isSessionCheckComplete) {
+            Animated.timing(bottomUiFade, {
+                toValue: 1,
+                duration: 250,
+                useNativeDriver: false,
+            }).start();
+        }
+    }, [isLoading, isSessionCheckComplete]);
 
     // Fetch Notification Count
     useEffect(() => {
@@ -117,19 +135,56 @@ export default function HomeScreenMain({ navigation, route }) {
             fetchData(false);
 
             // Poll every 2 seconds for real-time updates
-            const interval = setInterval(() => {
+            const dataInterval = setInterval(() => {
                 fetchData(true); // Silent update
             }, 2000);
 
-            return () => clearInterval(interval);
+            // Poll session every 10 seconds (Safety Check)
+            const sessionInterval = setInterval(() => {
+                checkActiveSession();
+            }, 10000);
+
+            return () => {
+                clearInterval(dataInterval);
+                clearInterval(sessionInterval);
+            };
         }, [])
     );
+
+    // Pulse Animation for Snackbar Border/Glow
+    const pulseAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (activeResumeSession) {
+            Animated.loop(
+                Animated.sequence([
+                    Animated.timing(pulseAnim, {
+                        toValue: 1,
+                        duration: 1000,
+                        useNativeDriver: false, // Required for color interpolation
+                    }),
+                    Animated.timing(pulseAnim, {
+                        toValue: 0,
+                        duration: 1000,
+                        useNativeDriver: false,
+                    }),
+                ])
+            ).start();
+        } else {
+            pulseAnim.setValue(0); // Reset
+        }
+    }, [activeResumeSession]);
+
+
 
     const checkActiveSession = async () => {
         try {
             const user = await authService.getUser();
-            if (user && user.id) {
+            if (user) {
                 const userId = user.id || user.userId || user.email; // Fallback
+                console.log("Checking active session for user:", userId);
+
+                if (!userId) return;
 
                 const activeSession = await sessionApi.getActiveSession(userId);
 
@@ -150,25 +205,14 @@ export default function HomeScreenMain({ navigation, route }) {
                     };
 
                     // If user manually minimized or navigated back, show Snackbar
-                    if (route.params?.minimized) {
-                        setActiveResumeSession(resumeData);
-                    } else {
-                        // Cold start: Prompt user instead of auto-redirect
-                        showAlert(
-                            "Active Session Detected",
-                            `You have an ongoing session at ${resumeData.stationName}.`,
-                            [
-                                {
-                                    text: "Stop Session",
-                                    style: "destructive",
-                                    onPress: () => navigation.replace('Session', { ...resumeData, autoStop: true })
-                                },
-                                {
-                                    text: "Open Session",
-                                    onPress: () => navigation.replace('Session', resumeData)
-                                }
-                            ]
-                        );
+                    // Always activation the session snackbar
+                    setActiveResumeSession(resumeData);
+
+                    // If user manually minimized, we are good (stay on Home with Snackbar).
+                    // If Cold Start (not minimized), AUTOMATICALLY RESTORE SESSION.
+                    if (!route.params?.minimized) {
+                        console.log("Cold Start with Active Session -> Auto Restoring...");
+                        navigation.replace('Session', resumeData);
                     }
                 } else {
                     setActiveResumeSession(null);
@@ -176,6 +220,8 @@ export default function HomeScreenMain({ navigation, route }) {
             }
         } catch (e) {
             console.log("No active session to resume or error checking:", e.message);
+        } finally {
+            setIsSessionCheckComplete(true);
         }
     };
 
@@ -206,6 +252,29 @@ export default function HomeScreenMain({ navigation, route }) {
         }
     }, [route.params?.foundStationId, stations]);
 
+
+
+    useEffect(() => {
+        if (!isLoading && stations.length > 0 && isSessionCheckComplete) {
+            Animated.parallel([
+                Animated.timing(skeletonOpacity, {
+                    toValue: 0,
+                    duration: 500,
+                    useNativeDriver: false,
+                }),
+                Animated.timing(contentOpacity, {
+                    toValue: 1,
+                    duration: 500,
+                    useNativeDriver: false,
+                }),
+            ]).start(() => setShowSkeleton(false));
+        } else if (isLoading || !isSessionCheckComplete) {
+            setShowSkeleton(true);
+            skeletonOpacity.setValue(1);
+            contentOpacity.setValue(0);
+        }
+    }, [isLoading, stations, isSessionCheckComplete]);
+
     const navTabAnim = useRef(new Animated.Value(0)).current; // 0 = Home, 1 = Library
 
     const handleTabChange = (tab) => {
@@ -218,7 +287,7 @@ export default function HomeScreenMain({ navigation, route }) {
         setCurrentTab(tab);
         Animated.timing(navTabAnim, {
             toValue: tab === 'Home' ? 0 : 1,
-            duration: 300,
+            duration: 250,
             useNativeDriver: false, // width/color animations not supported on native driver
         }).start();
     };
@@ -362,6 +431,8 @@ export default function HomeScreenMain({ navigation, route }) {
         mapRef.current?.animateToRegion(newRegion, 1000);
     };
 
+
+
     const handleCardPress = () => {
         setIsSheetVisible(true);
     };
@@ -437,13 +508,14 @@ export default function HomeScreenMain({ navigation, route }) {
                     showsUserLocation={true}
                     showsTraffic={true}
                     showsIndoors={true}
+                    onRegionChangeComplete={(r) => setRegion(r)} // Update region state on map move
                 >
                     {stations.map((station, index) => (
                         <Marker
-                            key={`${station.id}_${index}`}
+                            key={`station_${station.id}_${index}`}
                             coordinate={{ latitude: Number(station.latitude), longitude: Number(station.longitude) }}
                             onPress={() => handleStationPress(station)}
-                            zIndex={selectedStation?.id === station.id ? 10 : 1}
+                            zIndex={selectedStation?.id === station.id ? 20 : 10}
                         >
                             <View style={styles.customMarker}>
                                 <MapPinIcon
@@ -455,6 +527,10 @@ export default function HomeScreenMain({ navigation, route }) {
                             </View>
                         </Marker>
                     ))}
+
+
+
+
                 </MapView>
             </Animated.View>
 
@@ -497,163 +573,163 @@ export default function HomeScreenMain({ navigation, route }) {
                     }
                 ]}
             >
-
-
-
-
                 {/* Stations Horizontal Scroll List */}
-                <Animated.FlatList
-                    data={stations}
-                    horizontal
-                    pagingEnabled
-                    showsHorizontalScrollIndicator={false}
-                    snapToInterval={Dimensions.get('window').width * 0.95 + 20} // Card width + margin
-                    decelerationRate="fast"
-                    contentContainerStyle={{ paddingHorizontal: (Dimensions.get('window').width - (Dimensions.get('window').width * 0.95)) / 2 }}
-                    keyExtractor={(item, index) => `${item.id}_${index}`}
-                    onViewableItemsChanged={({ viewableItems }) => {
-                        if (viewableItems.length > 0) {
-                            const newItem = viewableItems[0].item;
-                            if (newItem.id !== selectedStation?.id) {
-                                handleStationPress(newItem); // Reuse logic to update map
+                {!activeResumeSession && !isLoading && (
+                    <Animated.FlatList
+                        data={stations}
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        snapToInterval={Dimensions.get('window').width * 0.95 + 20} // Card width + margin
+                        decelerationRate="fast"
+                        contentContainerStyle={{ paddingHorizontal: (Dimensions.get('window').width - (Dimensions.get('window').width * 0.95)) / 2 }}
+                        keyExtractor={(item, index) => `${item.id}_${index}`}
+                        onViewableItemsChanged={({ viewableItems }) => {
+                            if (viewableItems.length > 0) {
+                                const newItem = viewableItems[0].item;
+                                if (newItem.id !== selectedStation?.id) {
+                                    handleStationPress(newItem); // Reuse logic to update map
+                                }
                             }
-                        }
-                    }}
-                    viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
-                    renderItem={({ item }) => {
-                        // Logic to group connectors
-                        const stationChargers = allChargers.filter(c => c.stationId === item.id);
-                        const availableChargers = stationChargers.filter(c => c.status === 'Available' || (!c.occupied && c.availability)).length;
+                        }}
+                        viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+                        renderItem={({ item }) => {
+                            // Logic to group connectors
+                            const stationChargers = allChargers.filter(c => c.stationId === item.id);
+                            const availableChargers = stationChargers.filter(c => c.status === 'Available' || (!c.occupied && c.availability)).length;
 
-                        // Group by Type + Power
-                        const connectorGroups = {};
-                        stationChargers.forEach(c => {
-                            const type = (c.chargerType || c.type || 'Fast').replace('Charging', '').trim();
-                            const power = c.rate || c.max_power || 0;
-                            const key = `${type}-${power}`;
+                            // Group by Type + Power
+                            const connectorGroups = {};
+                            stationChargers.forEach(c => {
+                                const type = (c.chargerType || c.type || 'Fast').replace('Charging', '').trim();
+                                const power = c.rate || c.max_power || 0;
+                                const key = `${type}-${power}`;
 
-                            if (!connectorGroups[key]) {
-                                connectorGroups[key] = { type, power, total: 0, available: 0, busy: 0 };
-                            }
-                            connectorGroups[key].total += 1;
+                                if (!connectorGroups[key]) {
+                                    connectorGroups[key] = { type, power, total: 0, available: 0, busy: 0 };
+                                }
+                                connectorGroups[key].total += 1;
 
-                            const isAvailable = c.status === 'Available' || (!c.occupied && c.availability);
-                            const isBusy = c.status === 'Busy' || c.occupied === true; // status 'Busy' or boolean occupied
+                                const isAvailable = c.status === 'Available' || (!c.occupied && c.availability);
+                                const isBusy = c.status === 'Busy' || c.occupied === true; // status 'Busy' or boolean occupied
 
-                            if (isAvailable) {
-                                connectorGroups[key].available += 1;
-                            } else if (isBusy) {
-                                connectorGroups[key].busy += 1;
-                            }
-                        });
-                        const groupedConnectors = Object.values(connectorGroups);
+                                if (isAvailable) {
+                                    connectorGroups[key].available += 1;
+                                } else if (isBusy) {
+                                    connectorGroups[key].busy += 1;
+                                }
+                            });
+                            const groupedConnectors = Object.values(connectorGroups);
 
-                        return (
-                            <TouchableOpacity
-                                style={[styles.cardContainer, {
-                                    width: Dimensions.get('window').width * 0.95,
-                                    marginRight: 20,
-                                    position: 'relative',
-                                    bottom: 0, left: 0, right: 0
-                                }]}
-                                activeOpacity={0.9}
-                                onPress={handleCardPress}
-                            >
-                                {/* Top Row: Info + Image */}
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                                    <View style={{ flex: 1, paddingRight: 10 }}>
-                                        <Text style={styles.stationName} numberOfLines={2}>{item.name}</Text>
-                                        <View style={styles.ratingRow}>
-                                            <Text style={styles.ratingText}>4.3</Text>
-                                            <StarRating rating={4.3} />
+                            return (
+                                <TouchableOpacity
+                                    style={[styles.cardContainer, {
+                                        width: Dimensions.get('window').width * 0.95,
+                                        marginRight: 20,
+                                        position: 'relative',
+                                        bottom: 0, left: 0, right: 0
+                                    }]}
+                                    activeOpacity={0.9}
+                                    onPress={handleCardPress}
+                                >
+                                    {/* Top Row: Info + Image */}
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                                        <View style={{ flex: 1, paddingRight: 10 }}>
+                                            <Text style={styles.stationName} numberOfLines={2}>{item.name}</Text>
+                                            <View style={styles.ratingRow}>
+                                                <Text style={styles.ratingText}>4.3</Text>
+                                                <StarRating rating={4.3} />
+                                            </View>
+                                            <Text style={styles.addressText} numberOfLines={3}>
+                                                {item.location}
+                                            </Text>
                                         </View>
-                                        <Text style={styles.addressText} numberOfLines={3}>
-                                            {item.location}
-                                        </Text>
+                                        <View style={styles.imageContainerNew}>
+                                            <Image
+                                                source={{ uri: item.image_url || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7' }}
+                                                style={styles.stationImage}
+                                            />
+                                        </View>
                                     </View>
-                                    <View style={styles.imageContainerNew}>
-                                        <Image
-                                            source={{ uri: item.image_url || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7' }}
-                                            style={styles.stationImage}
-                                        />
-                                    </View>
-                                </View>
 
-                                {/* Bottom Row: Status/Connectors + Actions */}
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={[styles.statusText, { color: availableChargers > 0 ? '#00E676' : '#FF4213', marginBottom: 4 }]}>
-                                            {availableChargers > 0 ? 'Available' : 'Busy'}
-                                        </Text>
+                                    {/* Bottom Row: Status/Connectors + Actions */}
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[styles.statusText, { color: availableChargers > 0 ? '#00E676' : '#FF4213', marginBottom: 4 }]}>
+                                                {availableChargers > 0 ? 'Available' : 'Busy'}
+                                            </Text>
 
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                            {groupedConnectors.length > 0 ? (
-                                                <>
-                                                    {(() => {
-                                                        const group = groupedConnectors[0];
-                                                        let iconColor = '#FF1744';
-                                                        if (group.available > 0) iconColor = '#00E676';
-                                                        else if (group.busy > 0) iconColor = '#FF9100';
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                                {groupedConnectors.length > 0 ? (
+                                                    <>
+                                                        {(() => {
+                                                            const group = groupedConnectors[0];
+                                                            let iconColor = '#d3002aff';
+                                                            if (group.available > 0) iconColor = '#00E676';
+                                                            else if (group.busy > 0) iconColor = '#FF9100';
 
-                                                        return (
+                                                            return (
+                                                                <View style={{
+                                                                    flexDirection: 'row',
+                                                                    alignItems: 'center',
+                                                                    backgroundColor: 'rgba(255,255,255,0.1)',
+                                                                    borderRadius: 6,
+                                                                    paddingHorizontal: 8,
+                                                                    paddingVertical: 5
+                                                                }}>
+                                                                    <BoltIcon width={12} height={12} fill={iconColor} style={{ marginRight: 4 }} />
+                                                                    <Text style={{ color: '#ddd', fontSize: 11, fontWeight: '500' }}>
+                                                                        {group.power}kW ({group.type})
+                                                                    </Text>
+                                                                </View>
+                                                            );
+                                                        })()}
+                                                        {groupedConnectors.length > 1 && (
                                                             <View style={{
-                                                                flexDirection: 'row',
-                                                                alignItems: 'center',
                                                                 backgroundColor: 'rgba(255,255,255,0.1)',
                                                                 borderRadius: 6,
                                                                 paddingHorizontal: 8,
-                                                                paddingVertical: 5
+                                                                paddingVertical: 5,
+                                                                justifyContent: 'center',
+                                                                alignItems: 'center'
                                                             }}>
-                                                                <BoltIcon width={12} height={12} fill={iconColor} style={{ marginRight: 4 }} />
-                                                                <Text style={{ color: '#ddd', fontSize: 11, fontWeight: '500' }}>
-                                                                    {group.power}kW ({group.type})
+                                                                <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                                                                    +{groupedConnectors.length - 1}
                                                                 </Text>
                                                             </View>
-                                                        );
-                                                    })()}
-                                                    {groupedConnectors.length > 1 && (
-                                                        <View style={{
-                                                            backgroundColor: 'rgba(255,255,255,0.1)',
-                                                            borderRadius: 6,
-                                                            paddingHorizontal: 8,
-                                                            paddingVertical: 5,
-                                                            justifyContent: 'center',
-                                                            alignItems: 'center'
-                                                        }}>
-                                                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
-                                                                +{groupedConnectors.length - 1}
-                                                            </Text>
-                                                        </View>
-                                                    )}
-                                                </>
-                                            ) : (
-                                                <Text style={{ color: '#888', fontSize: 12 }}>No connectors found</Text>
-                                            )}
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <Text style={{ color: '#888', fontSize: 12 }}>No connectors found</Text>
+                                                )}
+                                            </View>
+                                        </View>
+
+                                        {/* Right: Action Buttons */}
+                                        <View style={{ justifyContent: 'flex-end', paddingBottom: 0, paddingEnd: 8, marginTop: 6 }}>
+                                            <TouchableOpacity
+                                                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 18, borderRadius: 24 }}
+                                                onPress={handleDirections}
+                                            >
+                                                <NavigationIcon width={24} height={24} fill="#212121" style={{ marginRight: 4 }} />
+                                                <Text style={{ color: '#212121', fontSize: 16, fontWeight: '600', marginBottom: 4 }}>Go</Text>
+                                            </TouchableOpacity>
                                         </View>
                                     </View>
+                                </TouchableOpacity>
+                            )
+                        }}
+                        style={{
+                            position: 'absolute',
+                            bottom: 100,
+                            left: 0,
+                            right: 0,
+                            zIndex: 10,
+                            opacity: contentOpacity,
+                        }}
+                    />
+                )}
 
-                                    {/* Right: Action Buttons */}
-                                    <View style={{ justifyContent: 'flex-end', paddingBottom: 0, paddingEnd: 8, marginTop: 6 }}>
-                                        <TouchableOpacity
-                                            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 18, borderRadius: 12 }}
-                                            onPress={handleDirections}
-                                        >
-                                            <NavigationIcon width={24} height={24} fill="#212121" style={{ marginRight: 4 }} />
-                                            <Text style={{ color: '#212121', fontSize: 16, fontWeight: '600', marginBottom: 4 }}>Go</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                            </TouchableOpacity>
-                        )
-                    }}
-                    style={{
-                        position: 'absolute',
-                        bottom: 100,
-                        left: 0,
-                        right: 0,
-                        zIndex: 10,
-                    }}
-                />
 
                 <StationBottomSheet
                     station={selectedStation}
@@ -730,30 +806,46 @@ export default function HomeScreenMain({ navigation, route }) {
                 </TouchableOpacity>
             </View>
 
-            {isLoading && (
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }]}>
-                    <ActivityIndicator size="large" color="#00E5FF" />
-                </View>
-            )}
+
 
             {/* Active Session Snackbar */}
             {activeResumeSession && currentTab === 'Home' && (
-                <TouchableOpacity
-                    style={styles.sessionSnackbar}
-                    activeOpacity={0.9}
-                    onPress={() => navigation.navigate('Session', activeResumeSession)}
+                <Animated.View
+                    style={[
+                        styles.sessionSnackbar,
+                        {
+                            backgroundColor: pulseAnim.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: ['#212121', '#303030'] // Pulse from Dark to Green
+                            }),
+                            padding: 0, // Remove padding from wrapper to let TouchableOpacity handle it
+                            borderWidth: 0, // No border
+                            opacity: bottomUiFade,
+                        }
+                    ]}
                 >
-                    <View style={styles.snackbarIcon}>
-                        <BoltIcon width={24} height={24} fill="#000" />
-                    </View>
-                    <View style={styles.snackbarContent}>
-                        <Text style={styles.snackbarTitle}>Charging in Progress</Text>
-                        <Text style={styles.snackbarSubtitle}>{activeResumeSession.stationName}</Text>
-                    </View>
-                    <View style={styles.snackbarAction}>
-                        <Text style={styles.snackbarActionText}>Open</Text>
-                    </View>
-                </TouchableOpacity>
+                    <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => navigation.navigate('Session', activeResumeSession)}
+                        style={{
+                            flex: 1,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            padding: 16,
+                        }}
+                    >
+                        <View style={styles.snackbarIcon}>
+                            <BoltIcon width={24} height={24} fill="#000" />
+                        </View>
+                        <View style={styles.snackbarContent}>
+                            <Text style={styles.snackbarTitle}>Charging in Progress</Text>
+                            <Text style={styles.snackbarSubtitle}>{activeResumeSession.stationName}</Text>
+                        </View>
+                        <View style={{ justifyContent: 'center', alignItems: 'center' }}>
+                            <ChevronRight color="#fff" size={24} />
+                        </View>
+                    </TouchableOpacity>
+                </Animated.View>
             )}
 
         </View>
@@ -769,7 +861,7 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
     },
     headerContainer: {
-        backgroundColor: 'rgba(33, 33, 33, 0.9)',
+        backgroundColor: 'rgba(33, 33, 33, 1)',
         borderBottomLeftRadius: 20,
         borderBottomRightRadius: 20,
         paddingHorizontal: 20,
@@ -1046,22 +1138,24 @@ const styles = StyleSheet.create({
     // Session Snackbar
     sessionSnackbar: {
         position: 'absolute',
-        top: 90, // Below header/search
+        bottom: 100, // Positioned well above the bottom nav
         left: 20,
         right: 20,
         backgroundColor: 'rgba(30, 30, 30, 1)',
         borderRadius: 16,
-        padding: 16,
+        // padding: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
         flexDirection: 'row',
         alignItems: 'center',
-        elevation: 0,
-        shadowColor: '#00e677',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        borderWidth: 0,
-        borderColor: '#00E676',
-        zIndex: 2000,
+        // elevation: 10, // Increased elevation
+        // shadowColor: '#00e677',
+        // shadowOffset: { width: 0, height: 4 },
+        // shadowOpacity: 0.3,
+        // shadowRadius: 8,
+        // borderWidth: 1, // Add border to make it pop
+        // borderColor: '#00E676',
+        zIndex: 9999, // Ensure it is on top of everything
     },
     snackbarIcon: {
         width: 40,

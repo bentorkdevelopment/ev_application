@@ -22,6 +22,8 @@ import MapScreen from '../screens/MapScreen';
 import QRScannerScreen from '../screens/QRScannerScreen';
 import InvoiceScreen from '../screens/InvoiceScreen';
 import SearchScreen from '../screens/SearchScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import TermsScreen from '../screens/TermsScreen';
 
 import { useAlert } from '../context/AlertContext';
 import { authService } from '../services/auth';
@@ -80,6 +82,8 @@ export default function AppNavigator() {
                 <Stack.Screen name="QRScanner" component={QRScannerScreen} />
                 <Stack.Screen name="Invoice" component={InvoiceScreen} />
                 <Stack.Screen name="Search" component={SearchScreen} />
+                <Stack.Screen name="Settings" component={SettingsScreen} />
+                <Stack.Screen name="Terms" component={TermsScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );
