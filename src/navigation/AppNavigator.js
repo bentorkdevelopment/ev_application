@@ -61,8 +61,23 @@ export default function AppNavigator() {
         return () => subscription.remove();
     }, []);
 
+    const linking = {
+        prefixes: ['https://web.bentork.in', 'bentork://'],
+        config: {
+            screens: {
+                Splash: {
+                    path: 'splash/:chargerId',
+                    parse: {
+                        chargerId: (id) => `${id}`,
+                    },
+                },
+                // Add other screens if needed
+            },
+        },
+    };
+
     return (
-        <NavigationContainer ref={navigationRef}>
+        <NavigationContainer ref={navigationRef} linking={linking}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="Splash" component={SplashScreen} />
                 <Stack.Screen name="Login" component={LoginScreen} />
