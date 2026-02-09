@@ -127,7 +127,7 @@ const EclipseLayer = ({ source, direction = 1, scaleRange = [1, 1.2], opacity = 
     )
 }
 
-export default function SplashScreen({ navigation } = {}) {
+export default function SplashScreen({ navigation, route } = {}) {
     // Animation Values
     const riseAnim = useRef(new Animated.Value(0)).current // Entrance opacity/rise
 
@@ -160,6 +160,28 @@ export default function SplashScreen({ navigation } = {}) {
                     }
 
                     const token = await authService.getToken();
+
+                    // Check for Deep Link from Route Params (React Navigation)
+                    // Configured in AppNavigator linking: splash/:chargerId
+                    let deepLinkChargerId = route.params?.chargerId;
+
+                    // Fallback: Check getInitialURL (mostly for Cold Starts if linking prop didn't catch it yet, or legacy support)
+                    if (!deepLinkChargerId) {
+                        try {
+                            const initialUrl = await Linking.getInitialURL();
+                            if (initialUrl) {
+                                const parts = initialUrl.split('/splash/');
+                                if (parts.length > 1) {
+                                    let id = parts[1];
+                                    id = id.split('?')[0].split('#')[0];
+                                    if (id.endsWith('/')) id = id.slice(0, -1);
+                                    if (id) deepLinkChargerId = id;
+                                }
+                            }
+                        } catch (linkError) {
+                            console.warn("Deep link check failed:", linkError);
+                        }
+                    }
 
                     if (deepLinkChargerId) {
                         const configParams = {
@@ -214,30 +236,13 @@ export default function SplashScreen({ navigation } = {}) {
             // Ensure we wait for the minimum splash time
             await minSplashTime;
 
-            // Check for Deep Link
-            let deepLinkChargerId = null;
-            try {
-                const initialUrl = await Linking.getInitialURL();
-                if (initialUrl) {
-                    const parts = initialUrl.split('/splash/');
-                    if (parts.length > 1) {
-                        let id = parts[1];
-                        id = id.split('?')[0].split('#')[0];
-                        if (id.endsWith('/')) id = id.slice(0, -1);
-                        if (id) deepLinkChargerId = id;
-                    }
-                }
-            } catch (linkError) {
-                console.warn("Deep link check failed:", linkError);
-            }
-
             // Proceed to navigation
             await handleNavigation();
         };
 
         checkAuth();
 
-    }, [navigation])
+    }, [navigation, route.params])
 
     // Entrance Transforms
     const containerTranslateY = riseAnim.interpolate({ inputRange: [0, 1], outputRange: [height * 0.2, 0] })
