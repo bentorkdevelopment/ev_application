@@ -82,6 +82,9 @@ if (localPropertiesFile.exists()) {
 def mySecretKey = localProperties.getProperty('MY_SECRET_KEY') ?: ""
 
 android {
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+    }
     lint {
         checkReleaseBuilds false
         abortOnError false
@@ -92,12 +95,12 @@ android {
 
     namespace "com.bentork.application"
     
-    defaultConfig {
+    defaultConfig { 
         applicationId "com.bentork.application"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 12
-        versionName "1.6.4"
+        versionCode 43
+        versionName "1.13.11"
         // This injects the variable into your Manifest
         manifestPlaceholders = [MY_SECRET_KEY_PLACEHOLDER: mySecretKey]
     }
@@ -146,6 +149,10 @@ dependencies {
 
 
     implementation "com.google.android.material:material:1.13.0"
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.0.4'
 
+}
 
+configurations.all {
+    exclude group: 'com.google.android.gms', module: 'play-services-maps'
 }

@@ -1,54 +1,75 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator, TextInput, KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { authService } from '../services/auth';
-import { authApi } from '../services/api';
+import { authApi, userApi } from '../services/api';
 import { GOOGLE_WEB_CLIENT_ID } from '@env';
+import { Mail, Lock, Eye, EyeOff, Smartphone } from 'lucide-react-native';
 
 export default function LoginScreen({ navigation, route }) {
     const [loading, setLoading] = useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
 
     useEffect(() => {
-        // Clear any stale session data on mount to ensure a fresh login attempt
+        // Clear any stale session data on mount
         const clearSession = async () => {
-            console.log("Clearing old session data...");
             await authService.logout();
         };
         clearSession();
 
         const clientId = GOOGLE_WEB_CLIENT_ID;
-        console.log("Configuring Google Sign-In...");
         if (!clientId || clientId.length < 10) {
-            console.error("CRITICAL: GOOGLE_WEB_CLIENT_ID is missing or invalid in .env!");
-            Alert.alert("Configuration Error", "Google Client ID is missing. Please restart the app with a valid environment.");
-        } else {
-            console.log("Using Web Client ID:", clientId.substring(0, 15) + "...");
+            console.warn("GOOGLE_WEB_CLIENT_ID is missing or invalid in .env");
         }
 
         GoogleSignin.configure({
             webClientId: clientId,
             offlineAccess: true,
             scopes: ['email', 'profile'],
-            forceCodeForRefreshToken: true, // often helps with token issues
+            forceCodeForRefreshToken: true,
         });
     }, []);
 
-    const signIn = async () => {
+    const handleManualLogin = async () => {
+        if (!email || !password) {
+            Alert.alert("Missing Fields", "Please enter both email and password.");
+            return;
+        }
+
+        setLoading(true);
+        try {
+            console.log("Attempting manual login for:", email);
+            const response = await authApi.login(email, password);
+
+            // Expected response: { token: "JWT...", ... }
+            if (response && response.token) {
+                await processLoginSuccess(response);
+            } else {
+                Alert.alert("Login Failed", "Invalid response from server.");
+            }
+        } catch (error) {
+            console.error("Manual login error:", error);
+            const msg = error.userMessage || (error.response?.data?.message) || "Invalid email or password.";
+            Alert.alert("Login Failed", msg);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleGoogleSignIn = async () => {
         try {
             await GoogleSignin.hasPlayServices();
             const userInfo = await GoogleSignin.signIn();
-
-            // Handle the successful login
             const userEmail = userInfo?.data?.user?.email || userInfo?.user?.email;
 
             if (userEmail) {
-                handleBackendLogin(userEmail.trim());
+                handleBackendGoogleLogin(userEmail.trim());
             } else {
                 Alert.alert("Login Error", "Could not retrieve email from Google Account.");
             }
-
         } catch (error) {
-            // ... (keep existing error handling)
             if (error.code === statusCodes.SIGN_IN_CANCELLED) {
                 console.log("User cancelled login");
             } else if (error.code === statusCodes.IN_PROGRESS) {
@@ -57,125 +78,232 @@ export default function LoginScreen({ navigation, route }) {
                 Alert.alert("Error", "Google Play Services not available");
             } else {
                 console.error(error);
-                Alert.alert("Error", "Login failed. Please try again.");
+                Alert.alert("Error", "Google Login failed. Please try again.");
             }
         }
     };
 
-    const handleBackendLogin = async (email) => {
-        console.log("Backend login initiated for:", email);
+    const handleBackendGoogleLogin = async (email) => {
         setLoading(true);
         try {
-            // Call backend to validate/get token
-            console.log("Sending request to:", authApi.googleLoginSuccess);
             const response = await authApi.googleLoginSuccess(email);
-            console.log("Backend response:", response);
-
-            // Response structure from backend: { token, name, email, imageUrl } based on valid endpoint read
             if (response && response.token) {
-                // 1. Clear any potential residual data first
-                await authService.logout();
-
-                // 2. Set new Token and User
-                await authService.setToken(response.token);
-                await authService.setUser({
-                    name: response.name,
-                    email: response.email,
-                    imageUrl: response.imageUrl
-                });
-
-                // 3. Verify token is saved
-                const savedToken = await authService.getToken();
-                console.log("Token saved verification:", savedToken ? "Success" : "Failed");
-
-                if (!savedToken) {
-                    Alert.alert("Login Error", "Failed to save session. Please try again.");
-                    return;
-                }
-
-                // 4. Check for redirect target (e.g. from Deep Link)
-                const { postLoginTarget, postLoginParams } = route.params || {};
-
-                if (postLoginTarget) {
-                    console.log(`Redirecting to ${postLoginTarget} after login...`);
-                    // Use replace to avoid going back to login
-                    navigation.replace(postLoginTarget, postLoginParams);
-                } else {
-                    // Reset navigation stack to Home
-                    // Using a small timeout to ensure AsyncStorage has settled (optional but safe)
-                    setTimeout(() => {
-                        navigation.reset({
-                            index: 0,
-                            routes: [{ name: 'Home' }],
-                        });
-                    }, 100);
-                }
+                await processLoginSuccess(response);
             } else {
-                console.warn("No token in response");
                 Alert.alert("Login Failed", "No token received from server.");
             }
         } catch (error) {
-            console.error("Backend login error:", error);
-            if (error.code === 'ECONNABORTED') {
-                Alert.alert("Login Failed", "Request timed out. Please check your internet connection.");
-            } else if (error.response) {
-                Alert.alert("Login Failed", `Server Error: ${error.response.status}`);
-            } else if (error.request) {
-                Alert.alert("Login Failed", "No response from server.");
-            } else {
-                Alert.alert("Login Failed", error.message);
-            }
+            console.error("Backend Google login error:", error);
+            Alert.alert("Login Failed", error.userMessage || "Server Error during Google Login");
         } finally {
             setLoading(false);
         }
     };
 
+    const processLoginSuccess = async (response) => {
+        // 1. Clear old data
+        await authService.logout();
+
+        // 2. Save new Token
+        const token = response.token;
+        if (!token) {
+            Alert.alert("Login Error", "No token received.");
+            return;
+        }
+        await authService.setToken(token);
+
+        // 3. Get User Details if missing (Manual Login)
+        let userData = {
+            id: response.id || response.userId,
+            name: response.name,
+            email: response.email,
+            imageUrl: response.imageUrl,
+            mobile: response.mobile
+        };
+
+        // If name is missing, we likely just got a token. Fetch full profile.
+        if (!userData.name) {
+            try {
+                // We rely on the 'email' state variable from the form for manual login
+                // OR decode token if possible. For now, use the email state if available.
+                const targetEmail = response.email || email; // 'email' from component state
+
+                if (targetEmail) {
+                    const userDetails = await userApi.getUserDetails(targetEmail);
+                    userData = {
+                        id: userDetails.id,
+                        name: userDetails.name,
+                        email: userDetails.email,
+                        imageUrl: userDetails.imageUrl,
+                        mobile: userDetails.mobile
+                    };
+                }
+            } catch (err) {
+                console.warn("Failed to fetch user details after login:", err);
+                // Continue anyway, maybe retrying later or relying on partial data
+            }
+        }
+
+        await authService.setUser(userData);
+
+        // 4. FCM Token Sync (Send to Backend)
+        try {
+            const { getFCMToken } = require('../services/fcmService');
+            getFCMToken(); // Run in background
+        } catch (fcmErr) {
+            console.warn("FCM sync error after login:", fcmErr);
+        }
+
+        // 5. Navigation
+        const { postLoginTarget, postLoginParams } = route.params || {};
+
+        // Check if Terms & Conditions have been accepted on this device
+        const tcAccepted = await authService.hasAcceptedTerms();
+
+        if (postLoginTarget) {
+            if (!tcAccepted) {
+                // Show T&C first, then go to the intended target
+                navigation.reset({
+                    index: 0,
+                    routes: [{
+                        name: 'TermsConsent',
+                        params: { nextScreen: postLoginTarget, nextParams: postLoginParams }
+                    }],
+                });
+            } else {
+                navigation.replace(postLoginTarget, postLoginParams);
+            }
+        } else if (!tcAccepted) {
+            // First-time user or device — show T&C before Home
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'TermsConsent', params: { nextScreen: 'Home' } }],
+            });
+        } else {
+            setTimeout(() => {
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Home' }],
+                });
+            }, 100);
+        }
+    };
+
     return (
-        <View style={styles.container}>
-            <Image
-                source={require('../assets/images/logo_inverted.png')}
-                style={styles.logo}
-                resizeMode="contain"
-            />
+        <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.container}
+        >
+            <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                <Image
+                    source={require('../assets/images/logo.png')}
+                    style={styles.logo}
+                    resizeMode="contain"
+                />
 
-            <Text style={styles.title}>Welcome Back</Text>
-            <Text style={styles.subtitle}>Sign in to continue</Text>
+                <Text style={styles.title}>Welcome Back</Text>
+                <Text style={styles.subtitle}>Sign in to continue charging</Text>
 
-            <TouchableOpacity
-                style={styles.forgotPassBtn}
-                onPress={() => navigation.navigate('ResetPassword')}
-            >
-                <Text style={styles.forgotPassText}>Forgot Password?</Text>
-            </TouchableOpacity>
-            <View style={styles.spacer} />
+                {/* Manual Login Form */}
+                <View style={styles.formContainer}>
+                    {/* Email Input */}
+                    <View style={styles.inputWrapper}>
+                        <Mail size={20} color="#888" style={styles.inputIcon} />
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Email Address"
+                            placeholderTextColor="#666"
+                            value={email}
+                            onChangeText={setEmail}
+                            autoCapitalize="none"
+                            keyboardType="email-address"
+                        />
+                    </View>
 
-            {
-                loading ? (
-                    <ActivityIndicator size="large" color="#4CAF50" />
-                ) : (
-                    <View style={{ width: '100%', alignItems: 'center' }}>
-
-
-
-                        {/* Google Button */}
-                        <TouchableOpacity style={styles.googleButton} onPress={signIn}>
-                            <Image
-                                source={require('../assets/images/google_ic.webp')}
-                                style={styles.googleIcon}
-                            />
-                            <Text style={styles.googleButtonText}>Sign in with Google</Text>
+                    {/* Password Input */}
+                    <View style={styles.inputWrapper}>
+                        <Lock size={20} color="#888" style={styles.inputIcon} />
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Password"
+                            placeholderTextColor="#666"
+                            value={password}
+                            onChangeText={setPassword}
+                            secureTextEntry={!showPassword}
+                        />
+                        <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                            {showPassword ? (
+                                <EyeOff size={20} color="#888" />
+                            ) : (
+                                <Eye size={20} color="#888" />
+                            )}
                         </TouchableOpacity>
                     </View>
-                )
-            }
 
-            <View style={styles.footerLinkContainer}>
-                <Text style={styles.footerLinkText}>Don't have an account? </Text>
-                <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-                    <Text style={styles.footerLinkHighlight}>Register</Text>
-                </TouchableOpacity>
-            </View>
-        </View >
+                    <TouchableOpacity
+                        style={styles.forgotPassBtn}
+                        onPress={() => navigation.navigate('ResetPassword')}
+                    >
+                        <Text style={styles.forgotPassText}>Forgot Password?</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.loginBtn, loading && styles.disabledBtn]}
+                        onPress={handleManualLogin}
+                        disabled={loading}
+                    >
+                        {loading ? (
+                            <ActivityIndicator color="#000" />
+                        ) : (
+                            <Text style={styles.loginBtnText}>Login</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+
+                {/* Divider */}
+                <View style={styles.dividerContainer}>
+                    <View style={styles.dividerLine} />
+                    <Text style={styles.dividerText}>OR</Text>
+                    <View style={styles.dividerLine} />
+                </View>
+
+                {/* Secondary Options */}
+                <View style={styles.secondaryContainer}>
+                    {/* Google Login */}
+                    <TouchableOpacity style={styles.googleButton} onPress={handleGoogleSignIn} disabled={loading}>
+                        <Image
+                            source={require('../assets/images/google_ic.webp')}
+                            style={styles.googleIcon}
+                        />
+                        <Text style={styles.googleButtonText}>Continue with Google</Text>
+                    </TouchableOpacity>
+
+                    {/* Phone Login */}
+                    {/* Phone Login - Disabled
+                    <TouchableOpacity
+                        style={styles.phoneButton}
+                        onPress={() => navigation.navigate('MobileLogin')}
+                        disabled={loading}
+                    >
+                        <Smartphone size={20} color="#fff" style={{ marginRight: 10 }} />
+                        <Text style={styles.phoneButtonText}>Login with Phone Number</Text>
+                    </TouchableOpacity>
+                    */}
+                </View>
+
+                {/* Register Link */}
+                <View style={styles.footerLinkContainer}>
+                    <Text style={styles.footerLinkText}>Don't have an account? </Text>
+                    <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+                        <Text style={styles.footerLinkHighlight}>Register</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* Extra padding for scroll */}
+                <View style={{ height: 40 }} />
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 }
 
@@ -183,13 +311,146 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#121212',
+    },
+    scrollContent: {
+        flexGrow: 1,
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingTop: 60,
+    },
+    logo: {
+        width: 160,
+        height: 60,
+        marginBottom: 30,
+        tintColor: '#fff',
+    },
+    title: {
+        fontSize: 28,
+        color: '#fff',
+        fontWeight: 'bold',
+        marginBottom: 8,
+    },
+    subtitle: {
+        fontSize: 16,
+        color: '#aaa',
+        marginBottom: 32,
+    },
+    formContainer: {
+        width: '100%',
+        marginBottom: 20,
+    },
+    inputWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#1E1E1E',
+        borderRadius: 16,
+        paddingHorizontal: 16,
+        height: 56,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#333',
+    },
+    inputIcon: {
+        marginRight: 12,
+    },
+    input: {
+        flex: 1,
+        color: '#fff',
+        fontSize: 16,
+        height: '100%',
+    },
+    forgotPassBtn: {
+        alignSelf: 'flex-end',
+        marginBottom: 24,
+    },
+    forgotPassText: {
+        color: '#39E29B',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    loginBtn: {
+        backgroundColor: '#39E29B',
+        height: 56,
+        borderRadius: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 20,
+        shadowColor: '#39E29B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
     },
+    disabledBtn: {
+        opacity: 0.7,
+    },
+    loginBtnText: {
+        color: '#000',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+
+    // Divider
+    dividerContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        width: '100%',
+        marginVertical: 24,
+    },
+    dividerLine: {
+        flex: 1,
+        height: 1,
+        backgroundColor: '#333',
+    },
+    dividerText: {
+        color: '#666',
+        paddingHorizontal: 16,
+        fontSize: 14,
+        fontWeight: '600',
+    },
+
+    // Secondary Buttons
+    secondaryContainer: {
+        width: '100%',
+        gap: 16,
+    },
+    googleButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#fff',
+        height: 56,
+        borderRadius: 16,
+    },
+    googleIcon: {
+        width: 24,
+        height: 24,
+        marginRight: 12,
+    },
+    googleButtonText: {
+        fontSize: 16,
+        color: '#000',
+        fontWeight: 'bold',
+    },
+    phoneButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'transparent',
+        height: 56,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#555',
+    },
+    phoneButtonText: {
+        fontSize: 16,
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+
+    // Footer
     footerLinkContainer: {
         flexDirection: 'row',
-        marginTop: 30,
+        marginTop: 40,
         alignItems: 'center',
     },
     footerLinkText: {
@@ -199,70 +460,6 @@ const styles = StyleSheet.create({
     footerLinkHighlight: {
         color: '#39E29B',
         fontSize: 15,
-        fontWeight: 'bold',
-    },
-    logo: {
-        width: 150,
-        height: 80,
-        marginBottom: 40,
-        tintColor: '#fff'
-    },
-    title: {
-        fontSize: 28,
-        color: '#fff',
-        fontWeight: 'bold',
-        marginBottom: 10,
-    },
-    subtitle: {
-        fontSize: 16,
-        color: '#aaa',
-        marginBottom: 20,
-    },
-    forgotPassBtn: {
-        marginBottom: 30,
-    },
-    forgotPassText: {
-        color: '#39E29B',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    spacer: {
-        height: 20,
-    },
-    googleButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff',
-        paddingVertical: 12,
-        paddingHorizontal: 30,
-        borderRadius: 30,
-        elevation: 5,
-    },
-    googleIcon: {
-        width: 24,
-        height: 24,
-        marginRight: 10,
-    },
-    googleButtonText: {
-        fontSize: 16,
-        color: '#000',
-        fontWeight: 'bold',
-    },
-    otpButton: {
-        backgroundColor: '#333',
-        paddingVertical: 12,
-        paddingHorizontal: 30,
-        borderRadius: 30,
-        borderWidth: 1,
-        borderColor: '#555',
-        marginBottom: 15,
-        width: '100%',
-        maxWidth: 300, // align with google button visual
-        alignItems: 'center',
-    },
-    otpButtonText: {
-        fontSize: 16,
-        color: '#fff',
         fontWeight: 'bold',
     },
 });

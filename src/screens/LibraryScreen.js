@@ -1,17 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronRight, Wallet, Clock, Settings, HelpCircle, MessageCircle, Info, User, Layout, FileText } from 'lucide-react-native';
+import { ChevronRight, Car, Calendar, TrendingUp, Layout, Zap, MapPin } from 'lucide-react-native';
 import { authService } from '../services/auth';
+import { Colors } from '../styles/GlobalStyles';
 
-const MenuItem = ({ icon: Icon, title, onPress }) => (
-    <TouchableOpacity style={styles.menuItem} onPress={onPress}>
-        <View style={styles.menuItemLeft}>
-            <Icon size={24} color="#fff" />
-            <Text style={styles.menuItemText}>{title}</Text>
+const MenuItem = ({ icon: Icon, title, onPress, subtitle, showChevron = true, color = Colors.white }) => (
+    <Pressable
+        style={({ pressed }) => [
+            styles.menuItem,
+            pressed && Platform.OS === 'ios' && { backgroundColor: 'rgba(255,255,255,0.05)' }
+        ]}
+        onPress={onPress}
+        android_ripple={{ color: 'rgba(255,255,255,0.1)' }}
+    >
+        <View style={[styles.iconContainer, { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
+            <Icon size={22} color={color} />
         </View>
-        <ChevronRight size={20} color="#fff" />
-    </TouchableOpacity>
+        <View style={styles.menuTextContainer}>
+            <Text style={[styles.menuItemText, { color }]}>{title}</Text>
+            {subtitle && <Text style={styles.menuItemSubtitle}>{subtitle}</Text>}
+        </View>
+        {showChevron && <ChevronRight size={20} color="#555" />}
+    </Pressable>
 );
 
 export default function LibraryScreen({ navigation }) {
@@ -31,45 +42,63 @@ export default function LibraryScreen({ navigation }) {
     return (
         <ScrollView
             style={styles.container}
-            contentContainerStyle={styles.contentContainer}
+            contentContainerStyle={[styles.contentContainer]}
             showsVerticalScrollIndicator={false}
         >
-            {/* User Profile Card */}
-            <TouchableOpacity style={styles.profileCard} onPress={() => navigation.navigate('Accounts')}>
-                <View style={styles.userInfoRow}>
-                    <View style={styles.avatarContainer}>
-                        {user?.imageUrl ? (
-                            <Image
-                                source={{ uri: user.imageUrl }}
-                                style={styles.avatarImage}
-                            />
-                        ) : (
-                            <User size={40} color="#fff" />
-                        )}
-                    </View>
-                    <View style={styles.userDetails}>
-                        <Text style={styles.userName}>{user?.name || 'User Name'}</Text>
-                        <Text style={styles.balanceLabel}>{user?.email || 'user@example.com'}</Text>
-                    </View>
-                    <ChevronRight size={20} color="#666" />
+
+
+
+            {/* Menu Section 1 */}
+            <View style={styles.sectionContainer}>
+                {/* <Text style={styles.sectionTitle}>My Activity</Text> */}
+                <View style={styles.menuGroup}>
+                    <MenuItem
+                        icon={Zap}
+                        title="Active Sessions"
+                        onPress={() => navigation.navigate('ActiveSessions')}
+                    />
+                    <MenuItem
+                        icon={Calendar}
+                        title="My Bookings"
+                        onPress={() => navigation.navigate('MyBookings')}
+                    />
+                    <MenuItem
+                        icon={Car}
+                        title="My Vehicles"
+                        onPress={() => navigation.navigate('VehicleDetails')}
+                    />
+                    <MenuItem
+                        icon={TrendingUp}
+                        title="Charging Insights"
+                        onPress={() => navigation.navigate('ChargingInsights')}
+                    />
+                    <MenuItem
+                        icon={MapPin}
+                        title="Trip Planner (Beta)"
+                        onPress={() => navigation.navigate('TripPlanner')}
+                    />
                 </View>
-            </TouchableOpacity>
-
-            {/* Menu Items */}
-            <View style={styles.menuContainer}>
-                <MenuItem icon={Wallet} title="Wallet" onPress={() => navigation.navigate('Wallet')} />
-
-                <MenuItem icon={Settings} title="Settings" onPress={() => navigation.navigate('Settings')} />
-                <MenuItem icon={HelpCircle} title="FAQs" onPress={() => navigation.navigate('FAQ')} />
-                <MenuItem icon={MessageCircle} title="Contact Us" onPress={() => { }} />
-                <MenuItem icon={Info} title="About" onPress={() => navigation.navigate('About')} />
-                <MenuItem icon={FileText} title="Terms & Conditions" onPress={() => navigation.navigate('Terms')} />
-
-                {/* Developer - Restricted */}
-                {user && (user.email?.toLowerCase().includes('om.lokhande34') || user.email?.toLowerCase().includes('jayeshmahajan340') || user.email?.toLowerCase().includes('sj020420')) && (
-                    <MenuItem icon={Layout} title="Developer Options" onPress={() => navigation.navigate('DeveloperOptions')} />
-                )}
             </View>
+
+            {/* Developer Section */}
+            {(user && (user.email?.toLowerCase().includes('om.lokhande34') || user.email?.toLowerCase().includes('jayeshmahajan340') || user.email?.toLowerCase().includes('sj020420'))) && (
+                <View style={styles.sectionContainer}>
+                    <Text style={styles.sectionTitle}>Developer</Text>
+                    <View style={styles.menuGroup}>
+                        <MenuItem
+                            icon={Layout}
+                            title="Developer Options"
+                            onPress={() => navigation.navigate('DeveloperOptions')}
+                        />
+                    </View>
+                </View>
+            )}
+
+
+
+
+
+            <View style={{ height: 100 + insets.bottom }} />
         </ScrollView>
     );
 }
@@ -77,93 +106,69 @@ export default function LibraryScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#121212',
+        backgroundColor: "#141414ff",
     },
     contentContainer: {
         paddingHorizontal: 20,
         paddingTop: 20,
-        paddingBottom: 100, // Space for Bottom Nav
     },
-    profileCard: {
-        backgroundColor: '#1E1E1E', // Dark card background
-        borderRadius: 16,
-        padding: 20,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: '#333',
-    },
-    userInfoRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    avatarContainer: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        backgroundColor: '#333',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 15,
-        borderWidth: 0.5,
-        borderColor: '#fff',
-        overflow: 'hidden', // Ensure image is clipped to round border
-    },
-    avatarImage: {
-        width: '100%',
-        height: '100%',
-    },
-    userDetails: {
-        flex: 1,
-    },
-    userName: {
-        color: '#fff',
-        fontSize: 18,
+    headerTitle: {
+        fontSize: 28,
         fontWeight: 'bold',
-        marginBottom: 4,
+        color: Colors.white,
+        marginTop: 20,
     },
-    balanceLabel: {
-        color: '#aaa',
-        fontSize: 12,
+    headerSubtitle: {
+        fontSize: 14,
+        color: '#666',
+        marginBottom: 30,
+        marginTop: 4,
     },
-    viewBalanceBtn: {
-        backgroundColor: '#2A2A2A',
-        paddingVertical: 8,
-        paddingHorizontal: 16,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#444',
+    // Sections
+    sectionContainer: {
+        marginBottom: 24,
     },
-    viewBalanceText: {
-        color: '#fff',
-        fontSize: 12,
+    sectionTitle: {
+        color: '#666',
+        fontSize: 14,
         fontWeight: '600',
+        marginBottom: 12,
+        marginLeft: 4,
+        textTransform: 'uppercase',
+        letterSpacing: 1,
     },
-    menuContainer: {
-        backgroundColor: '#1E1E1E',
-        borderRadius: 16,
-        paddingVertical: 10,
-        paddingHorizontal: 20,
-        borderWidth: 1,
-        borderColor: '#333',
+    menuGroup: {
+        backgroundColor: Colors.matteBlack,
+        borderRadius: 20,
+        overflow: 'hidden',
     },
+    // Menu Item
     menuItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: 18,
+        paddingVertical: 16,
+        paddingHorizontal: 16,
         borderBottomWidth: 1,
         borderBottomColor: '#2A2A2A',
     },
-    // Remove border for the last item if needed, but simple CSS doesn't support :last-child easily without logic. 
-    // We'll leave it or logic it out.
-    menuItemLeft: {
-        flexDirection: 'row',
+    iconContainer: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        justifyContent: 'center',
         alignItems: 'center',
+        marginRight: 16,
+    },
+    menuTextContainer: {
+        flex: 1,
     },
     menuItemText: {
-        color: '#fff',
         fontSize: 16,
-        marginLeft: 15,
         fontWeight: '500',
+    },
+    menuItemSubtitle: {
+        color: '#666',
+        fontSize: 12,
+        marginTop: 2,
     },
 });

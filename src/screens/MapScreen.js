@@ -17,7 +17,6 @@ const MapScreen = () => {
                     longitudeDelta: 0.0421,
                 }}
                 // Enable built-in Google features
-                showsUserLocation={true}
                 showsTraffic={true}
                 showsIndoors={true}
             >

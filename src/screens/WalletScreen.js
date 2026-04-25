@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar, Alert, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar, Alert, Animated, Easing, Share } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, ArrowDown, ArrowUp, X, Wallet as WalletIcon } from 'lucide-react-native';
+import { ChevronLeft, ArrowDown, ArrowUp, X, Wallet as WalletIcon, Gift, Copy, Share2 } from 'lucide-react-native';
 import { authService } from '../services/auth';
 import { authApi, userApi, razorpayApi } from '../services/api';
 import api from '../services/api';
@@ -10,6 +10,10 @@ import { RAZORPAY_KEY_ID } from '@env';
 import ReactNativeBiometrics, { BiometryTypes } from 'react-native-biometrics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import PinPromptModal from '../components/PinPromptModal';
+import { Colors } from '../styles/GlobalStyles';
+import remoteConfig from '@react-native-firebase/remote-config';
+import { shouldRespectMaintenance } from '../utils/devSettings';
+import WarningIcon from '../assets/icons/Rounded Fill/warning_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
 
 const { width } = Dimensions.get('window');
 
@@ -25,6 +29,11 @@ export default function WalletScreen({ navigation }) {
     const [loading, setLoading] = useState(false);
     const [walletBalance, setWalletBalance] = useState('0.00');
 
+    // Referral State
+    const [showReferralModal, setShowReferralModal] = useState(false);
+    const [referralCodeInput, setReferralCodeInput] = useState('');
+    const [activeReferralTab, setActiveReferralTab] = useState('share'); // 'share' | 'redeem'
+
     // Skeleton Loading & Fade State
     const [isFetching, setIsFetching] = useState(true);
     const pulseAnim = useRef(new Animated.Value(0.3)).current;
@@ -34,7 +43,26 @@ export default function WalletScreen({ navigation }) {
     const [isLocked, setIsLocked] = useState(false); // Default to false, check on mount
     const [showPinModal, setShowPinModal] = useState(false);
 
+    // Maintenance State
+    const [isMaintenance, setIsMaintenance] = useState(false);
+
     useEffect(() => {
+        const fetchMaint = async () => {
+            // Controlled by Developer Settings toggle
+            const respectMaintenance = await shouldRespectMaintenance();
+            if (!respectMaintenance) {
+                setIsMaintenance(false);
+                return;
+            }
+            try {
+                // Should return instant cache since HomeScreen already triggered fetch
+                const maint = remoteConfig().getValue('maintenance_key').asBoolean();
+                setIsMaintenance(maint);
+            } catch (e) {
+                console.warn('Could not read remote config:', e);
+            }
+        };
+        fetchMaint();
         checkSecurity();
     }, []);
 
@@ -116,13 +144,26 @@ export default function WalletScreen({ navigation }) {
     };
 
     const loadData = async () => {
+        let maintenanceActive = false;
+        const respectMaintenance = await shouldRespectMaintenance();
+        if (respectMaintenance) {
+            try {
+                maintenanceActive = remoteConfig().getValue('maintenance_key').asBoolean();
+            } catch (e) {
+                console.warn('Could not read remote config in loadData:', e);
+            }
+        }
+
         const userData = await authService.getUser();
         setUser(userData);
-        if (userData?.userId || userData?.id) {
-            await fetchTransactions(userData.userId || userData.id);
-        }
-        if (userData?.email) {
-            await fetchWalletBalance(userData.email);
+        
+        if (!maintenanceActive) {
+            if (userData?.userId || userData?.id) {
+                await fetchTransactions(userData.userId || userData.id);
+            }
+            if (userData?.email) {
+                await fetchWalletBalance(userData.email);
+            }
         }
     };
 
@@ -246,6 +287,27 @@ export default function WalletScreen({ navigation }) {
             Alert.alert("Error", "Failed to initiate payment. Please try again.");
         } finally {
             setLoading(false);
+        }
+    };
+
+    // Referral Logic
+    const handleShareReferral = async () => {
+        try {
+            await Share.share({
+                message: 'Join Bentork EV and energize your journey! Use my referral code: #0000',
+            });
+        } catch (error) {
+            console.error(error.message);
+        }
+    };
+
+    const handleRedeemReferral = () => {
+        if (referralCodeInput === '0000' || referralCodeInput === '#0000') {
+            Alert.alert("Success", "Referral code applied successfully! You've earned rewards.");
+            setShowReferralModal(false);
+            setReferralCodeInput('');
+        } else {
+            Alert.alert("Invalid Code", "Please enter a valid referral code.");
         }
     };
 
@@ -390,6 +452,16 @@ export default function WalletScreen({ navigation }) {
                 <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
                     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
+                        {/* Maintenance Reassurance Banner */}
+                        {isMaintenance && (
+                            <View style={styles.maintenanceReassurance}>
+                                <WarningIcon width={16} height={16} fill="#FFAB00" style={{ marginRight: 8 }} />
+                                <Text style={styles.maintenanceReassuranceText}>
+                                    Don't worry, your balance is safe and will restore after the maintenance break.
+                                </Text>
+                            </View>
+                        )}
+
                         {/* Balance Card - Gradient Style */}
                         <View style={styles.balanceCard}>
                             <View style={styles.balanceLabelRow}>
@@ -414,6 +486,20 @@ export default function WalletScreen({ navigation }) {
                                 </TouchableOpacity>
                             </View>
                         </View>
+
+                        {/* Refer & Earn Banner */}
+                        <TouchableOpacity style={styles.referCard} onPress={() => setShowReferralModal(true)}>
+                            <View style={styles.referContent}>
+                                <View style={styles.referIconBox}>
+                                    <Gift size={24} color="#FFD700" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.referTitle}>Refer & Earn</Text>
+                                    <Text style={styles.referDesc}>Invite friends & get rewards!</Text>
+                                </View>
+                                <ChevronLeft size={20} color="#555" style={{ transform: [{ rotate: '180deg' }] }} />
+                            </View>
+                        </TouchableOpacity>
 
                         {/* Transactions */}
                         <Text style={styles.sectionTitle}>Payment History</Text>
@@ -503,7 +589,76 @@ export default function WalletScreen({ navigation }) {
                     </TouchableOpacity>
                 </TouchableOpacity>
             </Modal>
-        </View>
+
+            {/* Referral Modal */}
+            <Modal
+                visible={showReferralModal}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setShowReferralModal(false)}
+            >
+                <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowReferralModal(false)}>
+                    <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Referral Program</Text>
+                            <TouchableOpacity onPress={() => setShowReferralModal(false)}>
+                                <X size={24} color="#aaa" />
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Tabs */}
+                        <View style={styles.tabContainer}>
+                            <TouchableOpacity
+                                style={[styles.tabBtn, activeReferralTab === 'share' && styles.activeTabBtn]}
+                                onPress={() => setActiveReferralTab('share')}
+                            >
+                                <Text style={[styles.tabText, activeReferralTab === 'share' && styles.activeTabText]}>My Code</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.tabBtn, activeReferralTab === 'redeem' && styles.activeTabBtn]}
+                                onPress={() => setActiveReferralTab('redeem')}
+                            >
+                                <Text style={[styles.tabText, activeReferralTab === 'redeem' && styles.activeTabText]}>Enter Code</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {activeReferralTab === 'share' ? (
+                            <View style={styles.referralBody}>
+                                <Text style={styles.referralHint}>Share this code with your friends and earn rewards when they join!</Text>
+                                <View style={styles.codeDisplay}>
+                                    <Text style={styles.codeText}>#0000</Text>
+                                </View>
+                                <TouchableOpacity style={styles.actionBtn} onPress={handleShareReferral}>
+                                    <Share2 size={20} color="#000" style={{ marginRight: 8 }} />
+                                    <Text style={styles.actionBtnText}>Share Code</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <View style={styles.referralBody}>
+                                <Text style={styles.referralHint}>Have a referral code? Enter it below to claim your reward.</Text>
+                                <View style={styles.inputGroup}>
+                                    <TextInput
+                                        style={styles.amountInput}
+                                        value={referralCodeInput}
+                                        onChangeText={setReferralCodeInput}
+                                        placeholder="#0000"
+                                        placeholderTextColor="#555"
+                                        autoCapitalize="characters"
+                                    />
+                                </View>
+                                <TouchableOpacity
+                                    style={[styles.payBtn, { opacity: !referralCodeInput ? 0.5 : 1 }]}
+                                    onPress={handleRedeemReferral}
+                                    disabled={!referralCodeInput}
+                                >
+                                    <Text style={styles.payBtnText}>Redeem Code</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </TouchableOpacity>
+                </TouchableOpacity>
+            </Modal>
+        </View >
     );
 }
 
@@ -530,11 +685,25 @@ const styles = StyleSheet.create({
     },
     pageTitle: {
         color: '#fff',
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: '600',
     },
     scrollContent: {
         paddingHorizontal: 20,
+    },
+    maintenanceReassurance: {
+        flexDirection: 'row',
+        backgroundColor: Colors.matteBlack,
+        borderRadius: 8,
+        padding: 10,
+        marginBottom: 16,
+        alignItems: 'center',
+    },
+    maintenanceReassuranceText: {
+        color: '#d48806',
+        fontSize: 12,
+        fontWeight: '500',
+        flex: 1,
     },
     // Balance Card
     balanceCard: {
@@ -561,7 +730,7 @@ const styles = StyleSheet.create({
     },
     balanceAmount: {
         color: '#fff',
-        fontSize: 32,
+        fontSize: 28,
         fontWeight: 'bold',
         marginBottom: 24,
     },
@@ -575,7 +744,7 @@ const styles = StyleSheet.create({
     },
     addBtnText: {
         color: '#39E29B',
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: '600',
     },
     // Ad Card
@@ -589,7 +758,7 @@ const styles = StyleSheet.create({
     },
     adTitle: {
         color: '#39E29B',
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: 'bold',
         marginBottom: 4,
     },
@@ -610,10 +779,42 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
     },
+    // Refer Card
+    referCard: {
+        backgroundColor: '#1E1E1E',
+        borderRadius: 20,
+        padding: 16,
+        marginBottom: 32,
+        borderWidth: 1,
+        borderColor: '#FFD700', // Gold border for premium feel
+    },
+    referContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    referIconBox: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255, 215, 0, 0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    referTitle: {
+        color: '#FFD700',
+        fontSize: 16,
+        fontWeight: 'bold',
+        marginBottom: 2,
+    },
+    referDesc: {
+        color: '#ccc',
+        fontSize: 12,
+    },
     // Transactions
     sectionTitle: {
         color: '#fff',
-        fontSize: 18,
+        fontSize: 16,
         fontWeight: '600',
         marginBottom: 16,
     },
@@ -652,7 +853,7 @@ const styles = StyleSheet.create({
     },
     txTitle: {
         color: '#fff',
-        fontSize: 15,
+        fontSize: 14,
         fontWeight: '500',
         marginBottom: 2,
     },
@@ -665,7 +866,7 @@ const styles = StyleSheet.create({
         alignItems: 'flex-end',
     },
     amountText: {
-        fontSize: 15,
+        fontSize: 14,
         fontWeight: '600',
         marginBottom: 4,
     },
@@ -700,7 +901,7 @@ const styles = StyleSheet.create({
     },
     modalTitle: {
         color: '#fff',
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: '600',
     },
     inputGroup: {
@@ -715,13 +916,13 @@ const styles = StyleSheet.create({
     },
     currencySymbol: {
         color: '#aaa',
-        fontSize: 20,
+        fontSize: 18,
         marginRight: 10,
     },
     amountInput: {
         flex: 1,
         color: '#fff',
-        fontSize: 24,
+        fontSize: 20,
         fontWeight: '600',
         padding: 0,
     },
@@ -771,22 +972,88 @@ const styles = StyleSheet.create({
     billTotalLabel: {
         color: '#fff',
         fontWeight: '600',
-        fontSize: 16,
+        fontSize: 15,
     },
     billTotalValue: {
         color: '#fff',
         fontWeight: '600',
-        fontSize: 16,
+        fontSize: 15,
     },
     payBtn: {
         backgroundColor: '#39E29B', // Green
+        paddingHorizontal: 24,
         paddingVertical: 16,
         borderRadius: 16,
         alignItems: 'center',
     },
     payBtnText: {
         color: '#000', // On Primary Container
-        fontSize: 16,
+        fontSize: 15,
         fontWeight: '600',
     },
+    // Referral Styles
+    tabContainer: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 12,
+        padding: 4,
+        marginBottom: 24,
+    },
+    tabBtn: {
+        flex: 1,
+        paddingVertical: 10,
+        alignItems: 'center',
+        borderRadius: 10,
+    },
+    activeTabBtn: {
+        backgroundColor: '#333',
+    },
+    tabText: {
+        color: '#888',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    activeTabText: {
+        color: '#fff',
+    },
+    referralBody: {
+        alignItems: 'center',
+    },
+    referralHint: {
+        color: '#aaa',
+        fontSize: 14,
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 20,
+    },
+    codeDisplay: {
+        backgroundColor: 'rgba(37, 37, 37, 0.1)',
+        paddingHorizontal: 32,
+        paddingVertical: 16,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#fff', // Gold
+        marginBottom: 24,
+    },
+    codeText: {
+        color: Colors.primaryContainer,
+        fontSize: 28,
+        fontWeight: 'bold',
+        letterSpacing: 2,
+    },
+    actionBtn: {
+        backgroundColor: '#fff',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+        paddingVertical: 14,
+        borderRadius: 14,
+        width: '100%',
+        justifyContent: 'center',
+    },
+    actionBtnText: {
+        color: '#000',
+        fontSize: 16,
+        fontWeight: 'bold',
+    }
 });

@@ -1,8 +1,11 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { View, Image, StyleSheet, Dimensions, Animated, Easing, StatusBar, Platform, Linking } from 'react-native'
 import Svg, { Path, G } from 'react-native-svg'
 import { authService } from '../services/auth';
-import SpInAppUpdates, { IAUUpdateKind } from 'sp-react-native-in-app-updates';
+import { NotificationService } from '../services/NotificationService';
+import SpInAppUpdates from 'sp-react-native-in-app-updates';
+import { BlurView } from '@react-native-community/blur';
+import UpdateRequiredModal from '../components/UpdateRequiredModal';
 
 const { width, height } = Dimensions.get('window')
 
@@ -17,33 +20,52 @@ const PATH_LIGHT = "M35.6,-62.3C46.5,-55.8,55.9,-47.5,63.1,-37.2C70.3,-26.9,75.3
 
 // Separate component for each Blob Layer to optimize rendering
 // We rotate the wrapping VIEW, not the SVG path, for native-driver performance.
-const BlobLayer = ({ path, color, direction = 1, scaleRange = [1, 1.2], opacity = 0.6, duration }) => {
+const BlobLayer = ({ path, color, direction = 1, scaleRange = [1, 1.2], opacity = 0.6, duration = 8000, delay = 0, pulseDelayHigh = 0, pulseDelayLow = 0, style }) => {
     const anim = useRef(new Animated.Value(0)).current
 
     useEffect(() => {
-        Animated.loop(
-            Animated.timing(anim, {
-                toValue: 1,
-                duration: duration,
-                easing: Easing.linear,
-                useNativeDriver: true
-            })
-        ).start()
-    }, [])
+        const startAnimation = () => {
+            Animated.loop(
+                Animated.sequence([
+                    Animated.timing(anim, {
+                        toValue: 1,
+                        duration: duration, // Pulse Out and Rotate
+                        easing: Easing.inOut(Easing.ease),
+                        useNativeDriver: true
+                    }),
+                    Animated.delay(pulseDelayHigh), // Pause at peak
+                    Animated.timing(anim, {
+                        toValue: 0,
+                        duration: duration, // Pulse In and Rotate Back
+                        easing: Easing.inOut(Easing.ease),
+                        useNativeDriver: true
+                    }),
+                    Animated.delay(pulseDelayLow) // Pause at trough
+                ])
+            ).start()
+        };
 
+        const timer = setTimeout(startAnimation, delay);
+        return () => clearTimeout(timer);
+    }, [duration, delay, pulseDelayHigh, pulseDelayLow])
+
+    // 0.25x rotation logic:
+    // With direction=1, rotates 0 -> 90deg -> 0.
+    // With direction=4, rotates 0 -> 360deg -> 0.
     const rotate = anim.interpolate({
         inputRange: [0, 1],
-        outputRange: ['0deg', `${360 * direction}deg`]
+        outputRange: ['5deg', `${10 * direction}deg`]
     })
 
     const scale = anim.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [scaleRange[0], scaleRange[1], scaleRange[0]]
+        inputRange: [0, 1],
+        outputRange: [scaleRange[0], scaleRange[1]]
     })
 
     return (
         <Animated.View style={[
             StyleSheet.absoluteFill,
+            style,
             {
                 justifyContent: 'center',
                 alignItems: 'center',
@@ -53,25 +75,7 @@ const BlobLayer = ({ path, color, direction = 1, scaleRange = [1, 1.2], opacity 
         ]}>
             <Svg height="150%" width="150%" viewBox="0 0 200 200">
                 <G transform="translate(100, 100)">
-                    {/* Faux-Blur using Strokes: 
-                        Layer 1: Wide, very transparent stroke (Outer Glow)
-                        Layer 2: Medium, transparent stroke (Mid Glow)
-                        Layer 3: Solid Fill (Core)
-                    */}
-                    <Path
-                        d={path}
-                        stroke={color}
-                        strokeWidth="40"
-                        strokeOpacity="0.1"
-                        fill="none"
-                    />
-                    <Path
-                        d={path}
-                        stroke={color}
-                        strokeWidth="20"
-                        strokeOpacity="0.2"
-                        fill="none"
-                    />
+                    {/* Single Solid Layer as requested */}
                     <Path
                         d={path}
                         fill={color}
@@ -129,20 +133,54 @@ const EclipseLayer = ({ source, direction = 1, scaleRange = [1, 1.2], opacity = 
 
 export default function SplashScreen({ navigation, route } = {}) {
     // Animation Values
-    const riseAnim = useRef(new Animated.Value(0)).current // Entrance opacity/rise
+    const riseAnim = useRef(new Animated.Value(0)).current // Entrance scale/translate
+    const isNavigating = useRef(false); // Ref for navigation race-condition fix
+    const [showUpdateModal, setShowUpdateModal] = useState(false);
+
+    // EXPLICIT EXIT ANIMATION REFS
+    const blob1Exit = useRef(new Animated.Value(1)).current
+    const blob2Exit = useRef(new Animated.Value(1)).current
+    const blob3Exit = useRef(new Animated.Value(1)).current
+
+    // EXPLICIT ENTRANCE ANIMATION REFS (Staggered Opacity)
+    const blob1Enter = useRef(new Animated.Value(0)).current
+    const blob2Enter = useRef(new Animated.Value(0)).current
+    const blob3Enter = useRef(new Animated.Value(0)).current
 
     useEffect(() => {
-        // Entrance
-        Animated.timing(riseAnim, {
-            toValue: 1,
-            duration: 1500,
-            easing: Easing.bezier(0.2, 0.8, 0.2, 1),
-            useNativeDriver: true
-        }).start()
+        // Entrance: Parallel execution of Scale/Translate (Global) and Opacity (Staggered)
+        Animated.parallel([
+            // Global Container Rise & Scale
+            Animated.timing(riseAnim, {
+                toValue: 1,
+                duration: 1200,
+                easing: Easing.bezier(0.2, 0.8, 0.2, 1),
+                useNativeDriver: true
+            }),
+            // Staggered Blob Appearances
+            Animated.timing(blob3Enter, {
+                toValue: 1,
+                duration: 500,
+                delay: 0,
+                useNativeDriver: true
+            }),
+            Animated.timing(blob2Enter, {
+                toValue: 1,
+                duration: 500,
+                delay: 200,
+                useNativeDriver: true
+            }),
+            Animated.timing(blob1Enter, {
+                toValue: 1,
+                duration: 500,
+                delay: 400,
+                useNativeDriver: true
+            })
+        ]).start()
 
         const checkAuth = async () => {
             // Start the minimum splash timer
-            const minSplashTime = new Promise(resolve => setTimeout(resolve, 2000));
+            const minSplashTime = new Promise(resolve => setTimeout(resolve, 5000));
 
             // Failsafe: Force navigation after 8 seconds if nothing else happens
             const safetyTimeout = setTimeout(() => {
@@ -152,6 +190,9 @@ export default function SplashScreen({ navigation, route } = {}) {
 
             const handleNavigation = async () => {
                 try {
+                    if (isNavigating.current) return;
+                    isNavigating.current = true;
+
                     clearTimeout(safetyTimeout); // Clear the failsafe if we get here normally
 
                     if (!navigation) {
@@ -159,7 +200,37 @@ export default function SplashScreen({ navigation, route } = {}) {
                         return;
                     }
 
+                    // Smooth Exit Animation: Fade out blobs individually with staggered delay
+                    await new Promise(resolve => {
+                        Animated.parallel([
+                            Animated.timing(blob1Exit, {
+                                toValue: 0,
+                                duration: 200,
+                                delay: 0,
+                                useNativeDriver: true
+                            }),
+                            Animated.timing(blob2Exit, {
+                                toValue: 0,
+                                duration: 200,
+                                delay: 200,
+                                useNativeDriver: true
+                            }),
+                            Animated.timing(blob3Exit, {
+                                toValue: 0,
+                                duration: 200,
+                                delay: 400,
+                                useNativeDriver: true
+                            })
+                        ]).start(resolve);
+                    });
+
                     const token = await authService.getToken();
+                    const isValid = await authService.isTokenValid(token);
+
+                    if (token && !isValid) {
+                        console.log("Token expired during splash check, logging out...");
+                        await authService.logout();
+                    }
 
                     // Check for Deep Link from Route Params (React Navigation)
                     // Configured in AppNavigator linking: splash/:chargerId
@@ -183,6 +254,7 @@ export default function SplashScreen({ navigation, route } = {}) {
                         }
                     }
 
+                    // Re-enabled Navigation Logic
                     if (deepLinkChargerId) {
                         const configParams = {
                             chargerId: deepLinkChargerId,
@@ -191,19 +263,40 @@ export default function SplashScreen({ navigation, route } = {}) {
                             status: 'Available'
                         };
 
-                        if (token) {
-                            navigation.replace('Config', configParams);
+                        if (token && isValid) {
+                            const tcAccepted = await authService.hasAcceptedTerms();
+                            if (!tcAccepted) {
+                                navigation.replace('TermsConsent', {
+                                    nextScreen: 'Config',
+                                    nextParams: configParams,
+                                });
+                            } else {
+                                navigation.replace('Config', configParams);
+                            }
                         } else {
                             navigation.replace('Login', {
                                 postLoginTarget: 'Config',
                                 postLoginParams: configParams
                             });
                         }
-                    } else if (token) {
-                        navigation.replace('Home');
+                    } else if (token && isValid) {
+
+                        // Ensure notification channels are set up for the user's persona
+                        const surveyData = await authService.getSurveyData();
+                        if (surveyData) {
+                            NotificationService.setupPersonaChannels(surveyData);
+                        }
+
+                        const tcAccepted = await authService.hasAcceptedTerms();
+                        if (!tcAccepted) {
+                            navigation.replace('TermsConsent', { nextScreen: 'Home' });
+                        } else {
+                            navigation.replace('Home');
+                        }
                     } else {
                         navigation.replace('Login');
                     }
+
                 } catch (navError) {
                     console.error("Navigation logic failed:", navError);
                     // Last resort fallback
@@ -211,21 +304,22 @@ export default function SplashScreen({ navigation, route } = {}) {
                 }
             };
 
-            // Check for In-App Updates (Android only for Immediate)
+            // Check for In-App Updates (Android only)
             if (Platform.OS === 'android') {
                 try {
                     const inAppUpdates = new SpInAppUpdates(false); // isDebug=false
-                    // Add a timeout to the update check so it doesn't freeze the app
+                    // Add a timeout so the check never stalls the splash indefinitely
                     const updateCheckPromise = inAppUpdates.checkNeedsUpdate();
-                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Update check timeout')), 3000));
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Update check timeout')), 3000)
+                    );
 
                     const result = await Promise.race([updateCheckPromise, timeoutPromise]);
 
                     if (result.shouldUpdate) {
-                        await inAppUpdates.startUpdate({
-                            updateType: IAUUpdateKind.IMMEDIATE,
-                        });
-                        return; // Stop here if updating
+                        // Show our own non-dismissable dialog instead of the native Play overlay
+                        setShowUpdateModal(true);
+                        return; // Navigation is paused until user updates
                     }
                 } catch (error) {
                     console.log('In-App Update check failed or timed out:', error);
@@ -247,89 +341,141 @@ export default function SplashScreen({ navigation, route } = {}) {
     // Entrance Transforms
     const containerTranslateY = riseAnim.interpolate({ inputRange: [0, 1], outputRange: [height * 0.2, 0] })
     const containerScale = riseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] })
-    const containerOpacity = riseAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] })
+
+    // Removed containerOpacity to allow individual blob opacity control
 
     return (
-        <View style={styles.container}>
-            <StatusBar backgroundColor="#212121" barStyle="light-content" />
-            <Animated.View style={[
-                styles.blobContainer,
-                {
-                    opacity: containerOpacity,
-                    transform: [
-                        { translateY: containerTranslateY },
-                        { scale: containerScale }
-                    ]
-                }
-            ]}>
-                {/* Replaced BlobLayers with EclipseLayers */}
+        <>
+            <View style={styles.container}>
+                <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
-                {/* Darker Image (Back) - Positioned Top */}
-                <EclipseLayer
-                    source={require('../assets/images/ecllipse_3.png')}
-                    duration={25000}
-                    direction={1}
-                    opacity={0.8}
-                    scaleRange={[0.9, 1.0]}
-                    style={{ top: -80, bottom: 80 }}
+                {/* 1. Background Layer: Blob */}
+                <Animated.View style={[
+                    styles.blobContainer,
+                    {
+                        transform: [
+                            { translateY: containerTranslateY },
+                            { scale: containerScale }
+                        ]
+                    }
+                ]}>
+                    {/* 
+                   Blob Stack using colors from ../assets/styles/SplashScreen.css:
+                   - Dark: #082f20 (opacity 0.9)
+                   - Green: #008f45 (opacity 0.7)
+                   - Light: #80e8b1 (opacity 0.5)
+
+                   Positioned based on user request:
+                   - Dark: Moved UPWARD (top value decreased)
+                   - Green: AS IS
+                   - White/Light: Moved BOTTOM MOST (top value increased)
+                */}
+
+                    {/* Dark Green Blob: #082f20 */}
+                    <BlobLayer
+                        path={PATH_GREEN}
+                        color="#082f20"
+                        duration={2000} // Pulse Duration
+                        delay={2000} // Start immediately
+                        pulseDelayHigh={800} // Dynamic pause
+                        pulseDelayLow={200}
+                        direction={4}
+                        // Combine Exit * Entrance * Base Opacity
+                        opacity={Animated.multiply(Animated.multiply(blob1Exit, blob1Enter), 0.9)}
+                        scaleRange={[1.1, 1.25]}
+                        style={{ top: height * 0.25, left: 0 }}
+                    />
+
+                    {/* Main Brand Green Blob: #008f45 */}
+                    <BlobLayer
+                        path={PATH_GREEN}
+                        color="#008f45"
+                        duration={1000} // Faster Pulse
+                        delay={1000} // Delayed start
+                        pulseDelayHigh={1500} // Long pause at peak
+                        pulseDelayLow={500}
+                        direction={1}
+                        opacity={Animated.multiply(Animated.multiply(blob2Exit, blob2Enter), 0.9)}
+                        scaleRange={[0.95, 1.05]}
+                        style={{ top: height * 0.5, left: -20 }}
+                    />
+
+                    {/* Light/White Glow Blob: #80e8b1 */}
+                    <BlobLayer
+                        path={PATH_GREEN}
+                        color="#80e8b1"
+                        duration={3000} // Medium Pulse
+                        delay={0} // More Delay
+                        pulseDelayHigh={0} // No pause at peak
+                        pulseDelayLow={2000} // Long pause at trough
+                        direction={8}
+                        opacity={Animated.multiply(Animated.multiply(blob3Exit, blob3Enter), 0.9)}
+                        scaleRange={[3.4, 3.6]} // Slight pulse on huge blob
+                        style={{ top: height * 0.85, left: 20 }}
+                    />
+                </Animated.View>
+
+                {/* 2. Fullscreen Blur Layer */}
+                <BlurView
+                    style={StyleSheet.absoluteFill}
+                    blurType="dark"
+                    blurAmount={32} // User edit: 8
+                    reducedTransparencyFallbackColor="rgba(0,0,0,0.8)"
                 />
 
-                {/* Middle Image - Centered */}
-                <EclipseLayer
-                    source={require('../assets/images/ecllipse_2.png')}
-                    duration={20000}
-                    direction={-1}
-                    opacity={0.8}
-                    scaleRange={[1.0, 1.1]}
-                />
+                {/* 3. Foreground Layer: Logo */}
+                <View style={styles.contentContainer}>
+                    <Image
+                        source={require('../assets/images/logo_inverted.png')}
+                        style={styles.logo}
+                        resizeMode="contain"
+                    />
+                </View>
 
-                {/* Lighter Image (Front) - Positioned Bottom */}
-                <EclipseLayer
-                    source={require('../assets/images/ecllipse_1.png')}
-                    duration={15000}
-                    direction={1}
-                    opacity={0.9}
-                    scaleRange={[1.1, 1.2]}
-                    style={{ top: 320, bottom: -120 }}
-                />
-
-            </Animated.View>
-
-            <View style={styles.contentContainer}>
-                <Image
-                    source={require('../assets/images/logo_inverted.png')}
-                    style={styles.logo}
-                    resizeMode="contain"
-                />
             </View>
-        </View>
+
+            {/* Non-dismissable update dialog – hoisted above splash UI */}
+            <UpdateRequiredModal
+                visible={showUpdateModal}
+                onUpdate={() => {
+                    // Keep modal visible after opening Play Store;
+                    // the user must install the update and reopen the app.
+                }}
+            />
+        </>
     )
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#111', // Dark background
+        backgroundColor: '#111',
         justifyContent: 'center',
         alignItems: 'center',
-        overflow: 'hidden'
+        zIndex: -100, // User edit
+        overflow: 'visible' // User fix for overflow
     },
     contentContainer: {
         zIndex: 10,
+        flex: 1,
         justifyContent: 'center',
-        alignItems: 'center'
+        alignItems: 'center',
+        width: '100%',
     },
     logo: {
         width: 200,
-        height: 200
+        height: 100,
+        marginBottom: 10
     },
     blobContainer: {
         position: 'absolute',
-        // Center on screen
-        top: (height - BLOB_SIZE) / 2 + 300,
-        left: (width - BLOB_SIZE) / 2 + 200,
-        width: BLOB_SIZE,
-        height: BLOB_SIZE,
-        zIndex: 1,
+        top: 40,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: -1, // User edit
+        overflow: 'visible' // User fix for overflow
     }
 })

@@ -5,6 +5,7 @@ import { ChevronLeft, Bell, Info, AlertTriangle, CheckCircle, SmartphoneCharging
 import { notificationApi } from '../services/api';
 import { authService } from '../services/auth';
 import { useFocusEffect } from '@react-navigation/native';
+import { Colors } from '../styles/GlobalStyles';
 
 const NotificationScreen = ({ navigation }) => {
     const insets = useSafeAreaInsets();
@@ -84,11 +85,11 @@ const NotificationScreen = ({ navigation }) => {
 
     const getIcon = (type) => {
         const lowerType = (type || '').toLowerCase();
-        if (lowerType.includes('success') || lowerType.includes('complete')) return <CheckCircle size={24} color="#00E676" />;
-        if (lowerType.includes('warn') || lowerType.includes('low')) return <AlertTriangle size={24} color="#FFC107" />;
-        if (lowerType.includes('alert') || lowerType.includes('fail')) return <AlertTriangle size={24} color="#FF5252" />;
-        if (lowerType.includes('charging') || lowerType.includes('session')) return <SmartphoneCharging size={24} color="#00E676" />;
-        return <Info size={24} color="#2979FF" />;
+        if (lowerType.includes('success') || lowerType.includes('complete')) return <CheckCircle size={24} color={Colors.statusGreen} />;
+        if (lowerType.includes('warn') || lowerType.includes('low')) return <AlertTriangle size={24} color={Colors.statusOrange} />;
+        if (lowerType.includes('alert') || lowerType.includes('fail')) return <AlertTriangle size={24} color={Colors.statusRed} />;
+        if (lowerType.includes('charging') || lowerType.includes('session')) return <SmartphoneCharging size={24} color={Colors.primary} />;
+        return <Info size={24} color={Colors.white} />;
     };
 
     const formatTime = (time) => {
@@ -120,18 +121,22 @@ const NotificationScreen = ({ navigation }) => {
                 onPress={() => markAsRead(item.id, isRead)}
                 activeOpacity={0.8}
             >
-                <View style={styles.iconContainer}>
-                    {getIcon(item.type)}
-                </View>
-                <View style={styles.contentContainer}>
-                    <View style={styles.headerRow}>
-                        <Text style={[styles.title, !isRead && styles.unreadTitle]}>{item.title}</Text>
-                        {!isRead && <View style={styles.dot} />}
+                {/* Unread Indicator Vertical Bar */}
+                {!isRead && <View style={styles.unreadIndicator} />}
+
+                <View style={styles.cardContent}>
+                    <View style={styles.iconContainer}>
+                        {getIcon(item.type)}
                     </View>
-                    <Text style={styles.message} numberOfLines={3}>{item.message || item.body}</Text>
-                    <Text style={styles.timestamp}>
-                        {formatTime(item.createdAt || item.timestamp)}
-                    </Text>
+                    <View style={styles.textContainer}>
+                        <View style={styles.headerRow}>
+                            <Text style={[styles.title, !isRead && styles.unreadTitle]}>{item.title}</Text>
+                            <Text style={styles.timestamp}>
+                                {formatTime(item.createdAt || item.timestamp)}
+                            </Text>
+                        </View>
+                        <Text style={styles.message} numberOfLines={3}>{item.message || item.body}</Text>
+                    </View>
                 </View>
             </TouchableOpacity>
         );
@@ -142,17 +147,17 @@ const NotificationScreen = ({ navigation }) => {
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <ChevronLeft size={28} color="#fff" />
+                    <ChevronLeft size={28} color={Colors.white} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Notifications</Text>
-                <TouchableOpacity onPress={markAllAsRead}>
+                <TouchableOpacity onPress={markAllAsRead} style={styles.markReadBtn}>
                     <Text style={styles.markAllText}>Read all</Text>
                 </TouchableOpacity>
             </View>
 
             {loading ? (
                 <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color="#00E676" />
+                    <ActivityIndicator size="large" color={Colors.primary} />
                 </View>
             ) : allNotifications.length > 0 ? (
                 <FlatList
@@ -162,7 +167,7 @@ const NotificationScreen = ({ navigation }) => {
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
                     refreshControl={
-                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00E676" />
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
                     }
                     ListFooterComponent={
                         allNotifications.length > displayLimit ? (
@@ -174,15 +179,18 @@ const NotificationScreen = ({ navigation }) => {
                             </TouchableOpacity>
                         ) : (
                             <View style={styles.footerNote}>
-                                <Text style={styles.footerNoteText}>No more notifications</Text>
+                                <Text style={styles.footerNoteText}>You're all caught up</Text>
                             </View>
                         )
                     }
                 />
             ) : (
                 <View style={styles.emptyContainer}>
-                    <Bell size={64} color="rgba(255,255,255,0.2)" />
+                    <View style={styles.emptyIconBg}>
+                        <Bell size={48} color={Colors.white} />
+                    </View>
                     <Text style={styles.emptyText}>No notifications yet</Text>
+                    <Text style={styles.emptySubText}>We'll notify you when something happens.</Text>
                 </View>
             )}
         </View>
@@ -192,7 +200,7 @@ const NotificationScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#121212',
+        backgroundColor: Colors.matteBlack,
     },
     header: {
         flexDirection: 'row',
@@ -203,112 +211,152 @@ const styles = StyleSheet.create({
         marginTop: 10,
     },
     backButton: {
-        padding: 5,
+        padding: 8,
+        marginLeft: -8,
     },
     headerTitle: {
-        fontSize: 20,
+        fontSize: 24,
         fontWeight: 'bold',
-        color: '#fff',
+        color: Colors.white,
+        flex: 1,
+        marginLeft: 8,
+    },
+    markReadBtn: {
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        backgroundColor: 'rgba(57, 226, 155, 0.1)',
+        borderRadius: 20,
     },
     markAllText: {
-        color: '#39E29B',
-        fontSize: 14,
+        color: Colors.statusGreen,
+        fontSize: 12,
         fontWeight: '600',
     },
     listContent: {
         paddingHorizontal: 20,
-        paddingBottom: 20,
+        paddingBottom: 40,
     },
     notificationCard: {
-        flexDirection: 'row',
-        backgroundColor: '#1E1E1E',
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: '#333',
+        backgroundColor: Colors.cardBg, // #1E1E1E usually
+        borderRadius: 20,
+        marginBottom: 16,
+        overflow: 'hidden',
+        position: 'relative',
+
+        // Shadow/Elevation
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 4,
+        },
+        shadowOpacity: 0.2,
+        shadowRadius: 5,
+        elevation: 4,
+        borderWidth: 0,
     },
     unreadCard: {
-        backgroundColor: 'rgba(57, 226, 155, 0.05)',
-        borderColor: 'rgba(57, 226, 155, 0.3)',
+        // Slightly lighter bg to distinguish? OR usage of the stripe
+        backgroundColor: '#252525',
+    },
+    unreadIndicator: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        width: 4,
+        backgroundColor: Colors.statusGreen,
+    },
+    cardContent: {
+        flexDirection: 'row',
+        padding: 16,
     },
     iconContainer: {
         marginRight: 16,
-        justifyContent: 'center',
-        alignItems: 'center',
-        width: 40,
+        justifyContent: 'flex-start',
+        paddingTop: 2,
     },
-    contentContainer: {
+    textContainer: {
         flex: 1,
     },
     headerRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 4,
+        alignItems: 'flex-start',
+        marginBottom: 6,
     },
     title: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#fff',
+        color: Colors.white,
         flex: 1,
+        paddingRight: 8,
     },
     unreadTitle: {
         fontWeight: '700',
-        color: '#39E29B',
-    },
-    dot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#39E29B',
-        marginLeft: 8,
-    },
-    message: {
-        fontSize: 14,
-        color: 'rgba(255, 255, 255, 0.7)',
-        marginBottom: 8,
-        lineHeight: 20,
     },
     timestamp: {
         fontSize: 12,
-        color: 'rgba(255, 255, 255, 0.4)',
+        color: '#888',
+        marginTop: 2,
+    },
+    message: {
+        fontSize: 14,
+        color: '#aaa',
+        lineHeight: 20,
     },
     emptyContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        paddingHorizontal: 40,
+    },
+    emptyIconBg: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#333',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 24,
+    },
+    emptyText: {
+        color: Colors.white,
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 8,
+    },
+    emptySubText: {
+        color: '#888',
+        fontSize: 14,
+        textAlign: 'center',
     },
     centerContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    emptyText: {
-        color: 'rgba(255,255,255,0.4)',
-        marginTop: 16,
-        fontSize: 16,
-    },
     loadMoreButton: {
-        paddingVertical: 12,
+        paddingVertical: 14,
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: 10,
+        marginTop: 8,
+        marginBottom: 20,
         backgroundColor: 'rgba(255,255,255,0.05)',
-        borderRadius: 8,
+        borderRadius: 12,
     },
     loadMoreText: {
-        color: '#00E676',
+        color: Colors.statusGreen,
         fontSize: 14,
         fontWeight: '600',
     },
     footerNote: {
-        paddingVertical: 20,
+        paddingVertical: 24,
         alignItems: 'center',
     },
     footerNoteText: {
-        color: 'rgba(255,255,255,0.2)',
-        fontSize: 12,
+        color: '#555',
+        fontSize: 14,
+        fontStyle: 'italic',
     },
 });
 
