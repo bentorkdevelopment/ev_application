@@ -1,7 +1,14 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronRight, ChevronLeft, Search, UserPlus, KeyRound, Smartphone, Layout, Code } from 'lucide-react-native';
+import { authService } from '../services/auth';
+import { ChevronRight, ChevronLeft, Search, UserPlus, KeyRound, Smartphone, Layout, Code, Bell, Navigation, Car, TrendingUp, MapPin, Zap, FlaskConical, Shield, Database, Trash2, X } from 'lucide-react-native';
+import { useAlert } from '../context/AlertContext';
+import notifee, { AndroidImportance } from '@notifee/react-native';
+import { getSimulateRelease, setSimulateRelease } from '../utils/devSettings';
+import UpdateRequiredModal from '../components/UpdateRequiredModal';
+import { Modal } from 'react-native';
+import { NotificationService } from '../services/NotificationService';
 
 const DevMenuItem = ({ icon: Icon, title, subtitle, onPress, color = "#fff" }) => (
     <TouchableOpacity style={styles.menuItem} onPress={onPress}>
@@ -20,6 +27,82 @@ const DevMenuItem = ({ icon: Icon, title, subtitle, onPress, color = "#fff" }) =
 
 export default function DeveloperScreen({ navigation }) {
     const insets = useSafeAreaInsets();
+    const { showAlert } = useAlert();
+    const [simulateRelease, setSimRelease] = useState(false);
+    const [isUpdateModalVisible, setIsUpdateModalVisible] = useState(false);
+    const [surveyModalVisible, setSurveyModalVisible] = useState(false);
+    const [surveyData, setSurveyData] = useState(null);
+
+    useEffect(() => {
+        getSimulateRelease().then(val => setSimRelease(val));
+    }, []);
+
+    const handleToggleSimulateRelease = async (value) => {
+        setSimRelease(value);
+        await setSimulateRelease(value);
+        showAlert(
+            value ? "Release Mode" : "Debug Mode",
+            value
+                ? "App will now respect Firebase maintenance config. Restart the app for full effect."
+                : "Firebase maintenance config will be ignored. Restart the app for full effect."
+        );
+    };
+
+    const handleShowSurveyData = async () => {
+        const data = await authService.getSurveyData();
+        setSurveyData(data);
+        setSurveyModalVisible(true);
+    };
+
+    const handleResetSurveyData = async () => {
+        // Clear locally stored survey data
+        // We'll add a clearSurveyData to authService or just set it to null
+        await authService.setSurveyData(null);
+        showAlert("Success", "Survey data has been reset. App will now prompt for survey on next entry.");
+    };
+
+    const handleTestNotification = async () => {
+        try {
+            // Request permissions (required for iOS)
+            await notifee.requestPermission();
+
+            // Create a channel (required for Android)
+            const channelId = await notifee.createChannel({
+                id: 'test-channel',
+                name: 'Test Channel',
+                importance: AndroidImportance.HIGH,
+            });
+
+            // Display a notification
+            await notifee.displayNotification({
+                title: 'Test Notification',
+                body: 'This is a test notification from Developer Options 🚀',
+                android: {
+                    channelId,
+                    smallIcon: 'ic_launcher', // verify if this resource exists, fallback if needed
+                    pressAction: {
+                        id: 'default',
+                    },
+                },
+            });
+
+            // Optional: Feedback toast/alert
+            // showAlert("Success", "Notification dispatched!");
+        } catch (error) {
+            console.error("Notification failed", error);
+            showAlert("Error", "Failed to trigger notification: " + error.message);
+        }
+    };
+
+    const handleSetupChannels = async () => {
+        const data = await authService.getSurveyData();
+        if (data) {
+            await NotificationService.setupPersonaChannels(data);
+            showAlert("Success", "Personalized notification channels have been configured based on your survey data.");
+        } else {
+            showAlert("Notice", "No survey data found. Please complete the onboarding survey first.");
+        }
+    };
 
     return (
         <View style={styles.container}>
@@ -33,22 +116,53 @@ export default function DeveloperScreen({ navigation }) {
             </View>
 
             <ScrollView contentContainerStyle={styles.content}>
-                <Text style={styles.sectionTitle}>Screen Previews</Text>
+
+                {/* Build Mode Section */}
+                <Text style={styles.sectionTitle}>Build Mode</Text>
+                <View style={styles.card}>
+                    <View style={styles.toggleItem}>
+                        <View style={styles.menuItemLeft}>
+                            <View style={[styles.iconBox, { borderColor: simulateRelease ? '#FF5252' : '#39E29B' }]}>
+                                <Shield size={20} color={simulateRelease ? '#FF5252' : '#39E29B'} />
+                            </View>
+                            <View style={styles.textContainer}>
+                                <Text style={styles.menuItemTitle}>Simulate Release</Text>
+                                <Text style={styles.menuItemSubtitle}>
+                                    {simulateRelease
+                                        ? 'Maintenance config is active'
+                                        : 'Maintenance config is ignored'}
+                                </Text>
+                            </View>
+                        </View>
+                        <Switch
+                            value={simulateRelease}
+                            onValueChange={handleToggleSimulateRelease}
+                            trackColor={{ false: '#333', true: 'rgba(255, 82, 82, 0.4)' }}
+                            thumbColor={simulateRelease ? '#FF5252' : '#39E29B'}
+                        />
+                    </View>
+                    <View style={styles.buildModeIndicator}>
+                        <View style={[styles.buildModeDot, { backgroundColor: simulateRelease ? '#FF5252' : '#39E29B' }]} />
+                        <Text style={[styles.buildModeText, { color: simulateRelease ? '#FF5252' : '#39E29B' }]}>
+                            {simulateRelease ? 'RELEASE BEHAVIOR' : 'DEBUG BEHAVIOR'}
+                        </Text>
+                    </View>
+                </View>
+
+                <Text style={[styles.sectionTitle, { marginTop: 30 }]}>System States</Text>
                 <View style={styles.card}>
                     <DevMenuItem
-                        icon={Search}
-                        title="Search Screen"
-                        subtitle="Station search & filters"
-                        onPress={() => navigation.navigate('Search')}
+                        icon={TrendingUp}
+                        title="Force Update Modal"
+                        subtitle="Test the simplified update dialog"
                         color="#39E29B"
+                        onPress={() => setIsUpdateModalVisible(true)}
                     />
-                    <DevMenuItem
-                        icon={UserPlus}
-                        title="Register Screen"
-                        subtitle="Sign up flow"
-                        onPress={() => navigation.navigate('Register')}
-                        color="#FF4081"
-                    />
+                </View>
+
+                <Text style={[styles.sectionTitle, { marginTop: 30 }]}>Screen Previews</Text>
+                <View style={styles.card}>
+
                     <DevMenuItem
                         icon={KeyRound}
                         title="Reset Password"
@@ -65,8 +179,33 @@ export default function DeveloperScreen({ navigation }) {
                     />
                 </View>
 
+                <Text style={[styles.sectionTitle, { marginTop: 30 }]}>Survey Data</Text>
+                <View style={styles.card}>
+                    <DevMenuItem
+                        icon={Database}
+                        title="View Survey Data"
+                        subtitle="Show locally stored onboarding info"
+                        color="#39E29B"
+                        onPress={handleShowSurveyData}
+                    />
+                    <DevMenuItem
+                        icon={Trash2}
+                        title="Reset Survey Data"
+                        subtitle="Delete local survey and force prompt"
+                        color="#FF5252"
+                        onPress={handleResetSurveyData}
+                    />
+                </View>
+
                 <Text style={[styles.sectionTitle, { marginTop: 30 }]}>Testing Tools</Text>
                 <View style={styles.card}>
+                    <DevMenuItem
+                        icon={FlaskConical}
+                        title="Test Screen"
+                        subtitle="Component & UI playground"
+                        color="#39E29B"
+                        onPress={() => navigation.navigate('Test')}
+                    />
                     <DevMenuItem
                         icon={Code}
                         title="Test Charging Session"
@@ -78,7 +217,9 @@ export default function DeveloperScreen({ navigation }) {
                             stationName: 'Dev Simulation Station',
                             selectedKwh: '45',
                             planId: 'DEV-PLAN',
-                            isDev: true
+                            isDev: true,
+                            latitude: 18.5204, // Pune Latitude
+                            longitude: 73.8567 // Pune Longitude
                         })}
                     />
                     <DevMenuItem
@@ -103,23 +244,68 @@ export default function DeveloperScreen({ navigation }) {
                             chargerType: 'DC Fast'
                         })}
                     />
+
                     <DevMenuItem
-                        icon={Code}
-                        title="Wallet Screen"
-                        subtitle="Direct Access"
-                        color="#00E676"
-                        onPress={() => navigation.navigate('Wallet')}
+                        icon={Bell}
+                        title="Test Notification"
+                        subtitle="Trigger local alert"
+                        color="#FF9800"
+                        onPress={handleTestNotification}
+                    />
+                    <DevMenuItem
+                        icon={Shield}
+                        title="Setup Persona Channels"
+                        subtitle="Initialize channels from survey"
+                        color="#39E29B"
+                        onPress={handleSetupChannels}
                     />
                 </View>
 
                 <Text style={[styles.sectionTitle, { marginTop: 30 }]}>App Info</Text>
                 <View style={styles.infoCard}>
                     <Text style={styles.infoText}>Version: 1.0.0 (Dev)</Text>
-                    <Text style={styles.infoText}>Build: Debug</Text>
+                    <Text style={styles.infoText}>Build: {simulateRelease ? 'Debug (Simulating Release)' : 'Debug'}</Text>
                     <Text style={styles.infoText}>React Native: 0.72.6</Text>
                 </View>
 
             </ScrollView>
+
+            <UpdateRequiredModal
+                visible={isUpdateModalVisible}
+                onUpdate={() => setIsUpdateModalVisible(false)}
+            />
+
+            {/* Survey Data Modal */}
+            <Modal
+                visible={surveyModalVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setSurveyModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>User Survey Data</Text>
+                            <TouchableOpacity onPress={() => setSurveyModalVisible(false)}>
+                                <X size={24} color="#888" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView style={styles.jsonContainer}>
+                            <Text style={styles.jsonText}>
+                                {surveyData ? JSON.stringify(surveyData, null, 4) : 'No survey data found.'}
+                            </Text>
+                        </ScrollView>
+
+                        <TouchableOpacity 
+                            style={styles.closeBtn} 
+                            onPress={() => setSurveyModalVisible(false)}
+                        >
+                            <Text style={styles.closeBtnText}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -218,5 +404,83 @@ const styles = StyleSheet.create({
     infoText: {
         color: '#888',
         fontFamily: 'monospace',
+    },
+    toggleItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 15,
+        paddingHorizontal: 15,
+    },
+    buildModeIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 15,
+        paddingBottom: 12,
+        paddingTop: 4,
+    },
+    buildModeDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginRight: 8,
+    },
+    buildModeText: {
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 1.5,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    modalContent: {
+        width: '100%',
+        maxHeight: '80%',
+        backgroundColor: '#1E1E1E',
+        borderRadius: 24,
+        padding: 24,
+        borderWidth: 1,
+        borderColor: '#333',
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#fff',
+    },
+    jsonContainer: {
+        backgroundColor: '#121212',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#222',
+    },
+    jsonText: {
+        color: '#39E29B',
+        fontFamily: 'monospace',
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    closeBtn: {
+        backgroundColor: '#39E29B',
+        height: 50,
+        borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    closeBtnText: {
+        color: '#000',
+        fontSize: 16,
+        fontWeight: 'bold',
     },
 });

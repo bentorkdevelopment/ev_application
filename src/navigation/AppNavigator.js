@@ -1,7 +1,7 @@
 // src/navigation/AppNavigator.js
 import React, { useEffect } from 'react';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, CardStyleInterpolators, TransitionPresets } from '@react-navigation/stack';
 import { DeviceEventEmitter } from 'react-native';
 
 import SplashScreen from '../screens/SplashScreen';
@@ -24,6 +24,19 @@ import InvoiceScreen from '../screens/InvoiceScreen';
 import SearchScreen from '../screens/SearchScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import TermsScreen from '../screens/TermsScreen';
+import TermsConsentScreen from '../screens/TermsConsentScreen';
+import MobileLoginScreen from '../screens/MobileLoginScreen';
+import TripPlannerScreen from '../screens/TripPlannerScreen';
+import VehicleDetailsScreen from '../screens/VehicleDetailsScreen';
+import ChargingInsightsScreen from '../screens/ChargingInsightsScreen';
+import StationReviewsScreen from '../screens/StationReviewsScreen';
+import StationDetailsScreen from '../screens/StationDetailsScreen';
+import MyBookingsScreen from '../screens/MyBookingsScreen';
+import ActiveSessionsScreen from '../screens/ActiveSessionsScreen';
+import TestScreen from '../screens/TestScreen';
+import OnboardingSurveyScreen from '../screens/OnboardingSurveyScreen';
+import ContactsScreen from '../screens/ContactsScreen';
+import ContactDetailsScreen from '../screens/ContactDetailsScreen';
 
 import { useAlert } from '../context/AlertContext';
 import { authService } from '../services/auth';
@@ -86,10 +99,25 @@ export default function AppNavigator() {
                 <Stack.Screen name="OtpLogin" component={OtpScreen} />
                 <Stack.Screen name="DeveloperOptions" component={DeveloperScreen} />
                 <Stack.Screen name="Home" component={HomeScreen} />
-                <Stack.Screen name="Config" component={ConfigScreen} />
+                <Stack.Screen 
+                    name="Config" 
+                    component={ConfigScreen} 
+                    options={{
+                        ...TransitionPresets.ModalSlideFromBottomIOS,
+                        gestureEnabled: true,
+                        cardStyleInterpolator: CardStyleInterpolators.forVerticalIOS
+                    }}
+                />
                 <Stack.Screen name="Session" component={SessionScreen} />
                 <Stack.Screen name="Wallet" component={WalletScreen} />
-                <Stack.Screen name="Accounts" component={AccountsScreen} />
+                <Stack.Screen
+                    name="Accounts"
+                    component={AccountsScreen}
+                    options={{
+                        presentation: 'transparentModal',
+                        animation: 'none',
+                    }}
+                />
                 <Stack.Screen name="About" component={AboutScreen} />
                 <Stack.Screen name="FAQ" component={FAQScreen} />
                 <Stack.Screen name="Notification" component={NotificationScreen} />
@@ -99,6 +127,23 @@ export default function AppNavigator() {
                 <Stack.Screen name="Search" component={SearchScreen} />
                 <Stack.Screen name="Settings" component={SettingsScreen} />
                 <Stack.Screen name="Terms" component={TermsScreen} />
+                <Stack.Screen
+                    name="TermsConsent"
+                    component={TermsConsentScreen}
+                    options={{ gestureEnabled: false }}
+                />
+                <Stack.Screen name="MobileLogin" component={MobileLoginScreen} />
+                <Stack.Screen name="TripPlanner" component={TripPlannerScreen} />
+                <Stack.Screen name="VehicleDetails" component={VehicleDetailsScreen} />
+                <Stack.Screen name="ChargingInsights" component={ChargingInsightsScreen} />
+                <Stack.Screen name="StationReviews" component={StationReviewsScreen} />
+                <Stack.Screen name="StationDetails" component={StationDetailsScreen} />
+                <Stack.Screen name="MyBookings" component={MyBookingsScreen} />
+                <Stack.Screen name="ActiveSessions" component={ActiveSessionsScreen} />
+                <Stack.Screen name="Test" component={TestScreen} />
+                <Stack.Screen name="OnboardingSurvey" component={OnboardingSurveyScreen} />
+                <Stack.Screen name="Contacts" component={ContactsScreen} />
+                <Stack.Screen name="ContactDetails" component={ContactDetailsScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );

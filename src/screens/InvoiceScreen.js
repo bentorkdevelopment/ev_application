@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle, Receipt, Download, Share2 } from 'lucide-react-native';
+import InAppReview from 'react-native-in-app-review';
 
 export default function InvoiceScreen({ navigation, route }) {
     const {
@@ -11,7 +12,8 @@ export default function InvoiceScreen({ navigation, route }) {
         sessionId,
         stationName: paramStationName,
         rate: paramRate,
-        chargerType: paramChargerType
+        chargerType: paramChargerType,
+        stationId // Ensure we pass stationId from SessionScreen
     } = route.params || {};
 
     // Generate dynamic or fallback values
@@ -46,8 +48,23 @@ export default function InvoiceScreen({ navigation, route }) {
     const paymentMethod = sessionData?.paymentMethod || "Wallet";
     const receiptId = sessionData?.transactionId || sessionData?.sessionId || sessionId || "N/A";
 
-    const handleDone = () => {
-        navigation.navigate('Home');
+    const handleDone = async () => {
+        // Integrate Google Play Rating
+        const isAvailable = InAppReview.isAvailable();
+
+        if (isAvailable) {
+            try {
+                await InAppReview.RequestInAppReview();
+            } catch (error) {
+                console.log("In-App Review Error:", error);
+            }
+        }
+
+        // Navigate to Home regardless of review outcome
+        navigation.reset({
+            index: 0,
+            routes: [{ name: 'Home' }],
+        });
     };
 
     return (
@@ -162,7 +179,7 @@ export default function InvoiceScreen({ navigation, route }) {
                     <Text style={styles.doneBtnText}>Done</Text>
                 </TouchableOpacity>
             </View>
-        </SafeAreaView>
+        </SafeAreaView >
     );
 }
 

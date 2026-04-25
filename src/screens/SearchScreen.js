@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, StatusBar, Animated, Modal } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, StatusBar, Animated, Modal, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter } from 'lucide-react-native';
-
+import { ChevronLeft, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter, Star } from 'lucide-react-native';
+import BoltOutlineIcon from '../assets/icons/Outlined/bolt_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { stationsApi, chargersApi } from '../services/api'; // Added chargersApi
-import StationBottomSheet from '../components/StationBottomSheet'; // Added StationBottomSheet
+import { stationsApi, chargersApi } from '../services/api';
+import StationBottomSheet from '../components/StationBottomSheet';
+import { Colors } from '../styles/GlobalStyles';
+import remoteConfig from '@react-native-firebase/remote-config';
+import { shouldRespectMaintenance } from '../utils/devSettings';
 
 // Categories Constant
 const CATEGORIES = [
@@ -17,61 +20,82 @@ const CATEGORIES = [
 
 const RECENT_SEARCHES_KEY = '@recent_searches';
 
-const StationItem = ({ station, index, onPress }) => { // Added onPress prop
+const StationItem = ({ station, index, onPress }) => {
     const fadeAnim = useRef(new Animated.Value(0)).current;
-    const scaleAnim = useRef(new Animated.Value(0.8)).current;
+    const scaleAnim = useRef(new Animated.Value(0.95)).current;
 
     useEffect(() => {
-        // Stagger the first 10 items, then animate subsequent items immediately on mount (scroll)
-        const delay = index < 10 ? index * 100 : 0;
-
+        const delay = index < 10 ? index * 80 : 0;
         Animated.parallel([
             Animated.timing(fadeAnim, {
                 toValue: 1,
-                duration: 250,
+                duration: 300,
                 delay: delay,
                 useNativeDriver: true,
             }),
-            Animated.timing(scaleAnim, {
+            Animated.spring(scaleAnim, {
                 toValue: 1,
-                duration: 250,
+                friction: 6,
+                tension: 40,
                 delay: delay,
                 useNativeDriver: true,
             }),
         ]).start();
     }, []);
 
+    // Helper for status color
+    const getStatusColor = (status) => {
+        const s = (status || '').toUpperCase();
+        if (s === 'ACTIVE' || s === 'AVAILABLE' || s === 'ONLINE') return Colors.statusGreen;
+        if (s === 'BUSY' || s === 'OCCUPIED' || s === 'CHARGING') return Colors.statusOrange;
+        return Colors.statusRed;
+    };
+
     return (
-        <Animated.View
-            style={{
-                opacity: fadeAnim,
-                transform: [{ scale: scaleAnim }],
-            }}
-        >
-            <TouchableOpacity style={styles.stationCard} onPress={() => onPress(station)}>
-                <View style={styles.stationIconContainer}>
-                    <Zap size={20} color="#39E29B" />
+        <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
+            <TouchableOpacity
+                style={styles.stationCard}
+                activeOpacity={0.9}
+                onPress={() => onPress(station)}
+            >
+                {/* Left: Image/Icon */}
+                <View style={styles.stationImageContainer}>
+                    {station.image_url ? (
+                        <Image source={{ uri: station.image_url }} style={styles.stationImage} />
+                    ) : (
+                        <View style={[styles.placeholderImage, { backgroundColor: 'rgba(255, 255, 255, 0.1)' }]}>
+                            <BoltOutlineIcon width={32} height={32} fill={Colors.white} />
+                        </View>
+                    )}
                 </View>
+
+                {/* Center: Info */}
                 <View style={styles.stationInfo}>
-                    <Text style={styles.stationName}>{station.name}</Text>
+                    <Text style={styles.stationName} numberOfLines={1}>{station.name}</Text>
                     <View style={styles.stationAddressRow}>
-                        <MapPin size={12} color="#888" />
-                        <Text style={styles.stationAddress}>
+                        <MapPin size={12} color="#888" style={{ marginRight: 4 }} />
+                        <Text style={styles.stationAddress} numberOfLines={1}>
                             {station.locationName || 'Unknown Location'}
                         </Text>
                     </View>
-                    <Text style={{ color: '#666', fontSize: 11, marginTop: 2 }}>
-                        Status: <Text style={{ color: station.status === 'ACTIVE' ? '#39E29B' : '#FF6B6B' }}>{station.status}</Text>
-                    </Text>
-                </View>
-                <View style={styles.stationRight}>
-                    <Text style={styles.distanceText}>
-                        {/* Mock distance/rating as it's not in StationDTO */}
-                        - km
-                    </Text>
-                    <View style={styles.ratingBadge}>
-                        <Text style={styles.ratingText}>★ 4.5</Text>
+
+                    <View style={styles.statusRow}>
+                        <View style={[styles.statusDot, { backgroundColor: getStatusColor(station.status) }]} />
+                        <Text style={[styles.statusText, { color: getStatusColor(station.status) }]}>
+                            {station.status || 'Unknown'}
+                        </Text>
+                        <Text style={styles.connectorInfo}>• 2 Connectors</Text>
                     </View>
+                </View>
+
+                {/* Right: Actions/Rating */}
+                <View style={styles.stationRight}>
+                    <View style={styles.ratingBadge}>
+                        <Star size={10} color="#FFD700" fill="#FFD700" style={{ marginRight: 2 }} />
+                        <Text style={styles.ratingText}>4.5</Text>
+                    </View>
+                    {/* Optional: Distance or Chevron */}
+                    {/* <ChevronRight size={20} color="#555" style={{ marginTop: 12 }} /> */}
                 </View>
             </TouchableOpacity>
         </Animated.View>
@@ -85,9 +109,9 @@ export default function SearchScreen({ navigation }) {
     const [isFilterVisible, setFilterVisible] = useState(false);
     const [activeCategory, setActiveCategory] = useState(null);
     const [stations, setStations] = useState([]);
-    const [allChargers, setAllChargers] = useState([]); // Added chargers state
-    const [selectedStation, setSelectedStation] = useState(null); // Added selectedStation
-    const [isSheetVisible, setIsSheetVisible] = useState(false); // Added sheet visibility
+    const [allChargers, setAllChargers] = useState([]);
+    const [selectedStation, setSelectedStation] = useState(null);
+    const [isSheetVisible, setIsSheetVisible] = useState(false);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -109,10 +133,7 @@ export default function SearchScreen({ navigation }) {
     const addRecentSearch = async (text) => {
         if (!text.trim()) return;
         const newSearch = { id: Date.now().toString(), text: text.trim() };
-
-        // Remove duplicates and keep top 5
         const updated = [newSearch, ...recentSearches.filter(s => s.text.toLowerCase() !== text.trim().toLowerCase())].slice(0, 5);
-
         setRecentSearches(updated);
         await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
     };
@@ -131,11 +152,26 @@ export default function SearchScreen({ navigation }) {
     const loadStations = async () => {
         try {
             setLoading(true);
+            
+            // Check maintenance mode first before loading (controlled by Developer Settings toggle)
+            const respectMaintenance = await shouldRespectMaintenance();
+            if (respectMaintenance) {
+                try {
+                    const isMaintenance = remoteConfig().getValue('maintenance_key').asBoolean();
+                    if (isMaintenance) {
+                        setStations([]);
+                        setAllChargers([]);
+                        return;
+                    }
+                } catch (e) {
+                    console.log('Error checking maintenance flag in search:', e);
+                }
+            }
+
             const [stationsData, chargersData] = await Promise.all([
                 stationsApi.getAllStations(),
                 chargersApi.getAllChargers().catch(e => [])
             ]);
-            console.log('Fetched stations:', stationsData.length);
             setStations(stationsData);
             setAllChargers(Array.isArray(chargersData) ? chargersData : (chargersData?.chargers || []));
         } catch (error) {
@@ -149,7 +185,6 @@ export default function SearchScreen({ navigation }) {
         let result = stations;
         const query = searchText.toLowerCase();
 
-        // 1. Text Filter
         if (query) {
             result = result.filter(station =>
                 (station.name?.toLowerCase() || '').includes(query) ||
@@ -157,12 +192,8 @@ export default function SearchScreen({ navigation }) {
             );
         }
 
-        // 2. Category Filter (Mock Logic as backend data might not have these tags yet)
         if (activeCategory) {
-            // For now, if 'Fast Charging' is selected, we could filter by rate > 50 if available, 
-            // but since data is limited, we will just simulate filtering or show all if logic is missing.
-            // Example real logic:
-            // if (activeCategory === '1') result = result.filter(s => s.chargers?.some(c => c.rate >= 50));
+            // Mock category filtering logic if needed
         }
 
         return result;
@@ -173,14 +204,12 @@ export default function SearchScreen({ navigation }) {
     };
 
     const handleStationPress = (station) => {
-        console.log('Station pressed:', station?.name);
         setSelectedStation(station);
         setIsSheetVisible(true);
     };
 
     const handleSelectCharger = (charger) => {
         setIsSheetVisible(false);
-
         const typeStr = (charger.chargerType || charger.type || '').toString().toUpperCase();
         const isAC = typeStr.includes('AC');
         const fallbackConnector = isAC ? 'Type 2' : 'CCS 2';
@@ -201,49 +230,50 @@ export default function SearchScreen({ navigation }) {
         setIsSheetVisible(false);
     };
 
-
     const renderHeader = () => (
         <View>
-            {/* Header Area */}
             <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <View style={styles.headerTop}>
-                    <TouchableOpacity
-                        style={styles.backBtn}
-                        onPress={() => navigation.goBack()}
-                    >
-                        <ChevronLeft size={24} color="#fff" />
+                    <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+                        <ChevronLeft size={24} color={Colors.white} />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Find Stations</Text>
                 </View>
 
                 {/* Search Bar */}
-                <View style={styles.searchContainer}>
-                    <Search size={20} color="#888" style={styles.searchIcon} />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Search by location, station..."
-                        placeholderTextColor="#666"
-                        value={searchText}
-                        onChangeText={setSearchText}
-                        onSubmitEditing={handleSearchSubmit}
-                        returnKeyType="search"
-                        autoFocus={false}
-                    />
-                    {searchText.length > 0 && (
-                        <TouchableOpacity onPress={() => setSearchText('')} style={styles.clearBtn}>
-                            <X size={16} color="#fff" />
-                        </TouchableOpacity>
-                    )}
+                <View style={styles.searchRow}>
+                    <View style={styles.searchContainer}>
+                        <Search size={20} color="#888" style={{ marginRight: 10 }} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Search location or station..."
+                            placeholderTextColor="#666"
+                            value={searchText}
+                            onChangeText={setSearchText}
+                            onSubmitEditing={handleSearchSubmit}
+                            returnKeyType="search"
+                            autoFocus={true}
+                        />
+                        {searchText.length > 0 && (
+                            <TouchableOpacity
+                                onPress={() => setSearchText('')}
+                                style={styles.clearBtn}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            >
+                                <X size={16} color={Colors.white} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
                     <TouchableOpacity
-                        style={[styles.filterBtn, activeCategory && { backgroundColor: 'rgba(57, 226, 155, 0.2)' }]}
+                        style={[styles.filterBtn, activeCategory && styles.filterBtnActive]}
                         onPress={() => setFilterVisible(true)}
                     >
-                        <Filter size={20} color={activeCategory ? "#39E29B" : "#fff"} />
+                        <Filter size={20} color={activeCategory ? Colors.matteBlack : Colors.white} />
                     </TouchableOpacity>
                 </View>
             </View>
 
-            {/* Recent Searches - Only show if no search text and list is not empty */}
+            {/* Recent Searches */}
             {searchText.length === 0 && recentSearches.length > 0 && (
                 <View style={styles.sectionContainer}>
                     <View style={styles.sectionHeader}>
@@ -258,14 +288,14 @@ export default function SearchScreen({ navigation }) {
                             style={styles.recentItem}
                             onPress={() => {
                                 setSearchText(item.text);
-                                addRecentSearch(item.text); // Move to top logic
+                                addRecentSearch(item.text);
                             }}
                         >
                             <View style={styles.recentLeft}>
                                 <Clock size={16} color="#666" />
                                 <Text style={styles.recentText}>{item.text}</Text>
                             </View>
-                            <TouchableOpacity onPress={() => removeRecentSearch(item.id)}>
+                            <TouchableOpacity onPress={() => removeRecentSearch(item.id)} style={{ padding: 4 }}>
                                 <X size={16} color="#444" />
                             </TouchableOpacity>
                         </TouchableOpacity>
@@ -274,7 +304,7 @@ export default function SearchScreen({ navigation }) {
             )}
 
             <View style={styles.sectionContainer}>
-                <Text style={[styles.sectionTitle, { marginLeft: 0 }]}>
+                <Text style={styles.sectionTitle}>
                     {searchText.length > 0 ? 'Search Results' : 'All Stations'}
                 </Text>
             </View>
@@ -283,7 +313,7 @@ export default function SearchScreen({ navigation }) {
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor="#121212" />
+            <StatusBar barStyle="light-content" backgroundColor={Colors.matteBlack} />
 
             <FlatList
                 data={filteredStations}
@@ -292,12 +322,16 @@ export default function SearchScreen({ navigation }) {
                 ListHeaderComponent={renderHeader}
                 ListEmptyComponent={
                     !loading && (
-                        <Text style={{ color: '#666', textAlign: 'center', marginTop: 20 }}>No stations found</Text>
+                        <View style={{ alignItems: 'center', marginTop: 40 }}>
+                            <Search size={48} color="#333" />
+                            <Text style={{ color: '#666', marginTop: 10 }}>No stations found</Text>
+                        </View>
                     )
                 }
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
+                keyboardShouldPersistTaps="always"
+                keyboardDismissMode="on-drag"
                 ListFooterComponent={<View style={{ height: 40 }} />}
             />
 
@@ -317,7 +351,7 @@ export default function SearchScreen({ navigation }) {
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>Filter Stations</Text>
                             <TouchableOpacity onPress={() => setFilterVisible(false)}>
-                                <X size={24} color="#fff" />
+                                <X size={24} color={Colors.white} />
                             </TouchableOpacity>
                         </View>
 
@@ -329,14 +363,10 @@ export default function SearchScreen({ navigation }) {
                                 return (
                                     <TouchableOpacity
                                         key={cat.id}
-                                        style={[styles.categoryChip, styles.modalCategoryChip, isActive && styles.categoryChipActive]}
-                                        onPress={() => {
-                                            setActiveCategory(isActive ? null : cat.id);
-                                            // Optional: Close modal on selection? 
-                                            // setFilterVisible(false);
-                                        }}
+                                        style={[styles.categoryChip, isActive && styles.categoryChipActive]}
+                                        onPress={() => setActiveCategory(isActive ? null : cat.id)}
                                     >
-                                        <Icon size={16} color={isActive ? "#000" : "#fff"} style={{ marginRight: 6 }} />
+                                        <Icon size={16} color={isActive ? Colors.matteBlack : Colors.white} style={{ marginRight: 6 }} />
                                         <Text style={[styles.categoryText, isActive && styles.categoryTextActive]}>{cat.name}</Text>
                                     </TouchableOpacity>
                                 );
@@ -359,6 +389,7 @@ export default function SearchScreen({ navigation }) {
                 visible={isSheetVisible}
                 onClose={handleCloseBottomSheet}
                 onSelectCharger={handleSelectCharger}
+                navigation={navigation}
             />
         </View>
     );
@@ -367,12 +398,11 @@ export default function SearchScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#121212',
+        backgroundColor: Colors.matteBlack,
     },
     header: {
-        paddingHorizontal: 20,
+        paddingHorizontal: 0,
         paddingBottom: 20,
-        backgroundColor: '#121212',
     },
     headerTop: {
         flexDirection: 'row',
@@ -380,195 +410,213 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     backBtn: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 15,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+        padding: 5,
+        marginRight: 10,
     },
     headerTitle: {
-        color: '#fff',
-        fontSize: 22,
+        color: Colors.white,
+        fontSize: 24,
         fontWeight: 'bold',
     },
-    searchContainer: {
+    searchRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#1E1E1E',
-        borderRadius: 16,
-        paddingHorizontal: 15,
-        height: 54,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
     },
-    searchIcon: {
-        marginRight: 10,
+    searchContainer: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.cardBg, // #1E1E1E
+        borderRadius: 24, // Pill shape
+        paddingHorizontal: 16,
+        paddingVertical: 12, // Increased height for easier tap
+        marginRight: 12,
+        // Shadow
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 3,
     },
     searchInput: {
         flex: 1,
-        color: '#fff',
+        color: Colors.white,
         fontSize: 16,
-        height: '100%',
+        paddingVertical: 0, // Reset default Android padding
     },
     clearBtn: {
         padding: 4,
-        backgroundColor: 'rgba(255,255,255,0.2)',
+        backgroundColor: 'rgba(255,255,255,0.1)',
         borderRadius: 10,
-        marginRight: 10,
+        marginLeft: 8,
     },
     filterBtn: {
-        padding: 8,
-        borderLeftWidth: 1,
-        borderLeftColor: '#333',
-        paddingLeft: 12,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: Colors.cardBg,
+        justifyContent: 'center',
+        alignItems: 'center',
+        // Shadow
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    filterBtnActive: {
+        backgroundColor: Colors.statusGreen,
     },
     scrollContent: {
-        paddingTop: 10,
+        paddingHorizontal: 20,
+        paddingBottom: 20,
     },
+    // Recent Searches
     sectionContainer: {
         marginTop: 24,
-        paddingHorizontal: 20,
+        marginBottom: 20,
     },
     sectionHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: 12,
+        paddingHorizontal: 12,
     },
     sectionTitle: {
-        color: '#fff',
-        fontSize: 18,
+        color: '#888',
+        fontSize: 14,
         fontWeight: '600',
-        marginBottom: 12,
-        marginLeft: 20, // Align with padding
+        textTransform: 'uppercase',
+        letterSpacing: 1,
     },
     clearAllText: {
-        color: '#39E29B',
+        color: Colors.statusOrange,
         fontSize: 13,
         fontWeight: '500',
     },
-    // Categories
-    categoriesScroll: {
-        marginBottom: 8,
-    },
-    categoriesContent: {
-        paddingHorizontal: 20,
-        gap: 10,
-    },
-    categoryChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#1E1E1E',
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderRadius: 25,
-        borderWidth: 1,
-        borderColor: '#333',
-    },
-    categoryChipActive: {
-        backgroundColor: '#39E29B',
-        borderColor: '#39E29B',
-    },
-    categoryText: {
-        color: '#ccc',
-        fontSize: 14,
-        fontWeight: '500',
-    },
-    categoryTextActive: {
-        color: '#000',
-        fontWeight: '600',
-    },
-    // Recent Searches
     recentItem: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingVertical: 14,
+        paddingHorizontal: 20,
         borderBottomWidth: 1,
-        borderBottomColor: '#222',
+        borderBottomColor: '#252525',
     },
     recentLeft: {
         flexDirection: 'row',
         alignItems: 'center',
     },
     recentText: {
-        color: '#aaa',
-        fontSize: 15,
-        marginLeft: 12,
+        color: '#ccc',
+        fontSize: 16,
+        marginLeft: 14,
     },
     // Station Cards
     stationCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#1E1E1E',
-        padding: 16,
-        borderRadius: 16,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.05)',
+        backgroundColor: Colors.cardBg,
+        paddingVertical: 16,
+        paddingHorizontal: 12,
+        borderRadius: 20,
+        marginBottom: 14,
+        // Shadow
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 5,
+        elevation: 4,
     },
-    stationIconContainer: {
-        width: 48,
-        height: 48,
-        borderRadius: 14,
-        backgroundColor: 'rgba(57, 226, 155, 0.1)',
+    stationImageContainer: {
+        width: 60,
+        height: 60,
+        borderRadius: 16,
+        overflow: 'hidden',
+        marginRight: 14,
+        backgroundColor: Colors.cardBg,
+    },
+    stationImage: {
+        width: '100%',
+        height: '100%',
+    },
+    placeholderImage: {
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 14,
     },
     stationInfo: {
         flex: 1,
+        justifyContent: 'center',
     },
     stationName: {
-        color: '#fff',
+        color: Colors.white,
         fontSize: 16,
-        fontWeight: '600',
+        fontWeight: '700',
         marginBottom: 4,
     },
     stationAddressRow: {
         flexDirection: 'row',
         alignItems: 'center',
-    },
-    stationAddress: {
-        color: '#888',
-        fontSize: 12,
-        marginLeft: 4,
-    },
-    stationRight: {
-        alignItems: 'flex-end',
-    },
-    distanceText: {
-        color: '#39E29B',
-        fontSize: 14,
-        fontWeight: '600',
         marginBottom: 6,
     },
+    stationAddress: {
+        color: '#999',
+        fontSize: 12,
+        flex: 1,
+    },
+    statusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    statusDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        marginRight: 6,
+    },
+    statusText: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginRight: 6,
+    },
+    connectorInfo: {
+        color: '#666',
+        fontSize: 12,
+    },
+    stationRight: {
+        justifyContent: 'flex-start',
+        alignItems: 'flex-end',
+        alignSelf: 'flex-start',
+        paddingTop: 4,
+    },
     ratingBadge: {
-        backgroundColor: '#333',
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.08)',
         paddingHorizontal: 8,
-        paddingVertical: 3,
+        paddingVertical: 4,
         borderRadius: 8,
+        marginEnd: 8,
     },
     ratingText: {
-        color: '#FFD700',
-        fontSize: 11,
+        color: Colors.white,
+        fontSize: 12,
         fontWeight: '600',
     },
     // Modal Styles
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.7)',
+        backgroundColor: 'rgba(0,0,0,0.8)',
         justifyContent: 'center',
         paddingHorizontal: 20,
     },
     modalContent: {
-        backgroundColor: '#1E1E1E',
-        borderRadius: 20,
+        backgroundColor: Colors.cardBg,
+        borderRadius: 28,
         padding: 24,
+        paddingVertical: 32,
     },
     modalHeader: {
         flexDirection: 'row',
@@ -577,33 +625,59 @@ const styles = StyleSheet.create({
         marginBottom: 24,
     },
     modalTitle: {
-        fontSize: 20,
+        fontSize: 22,
         fontWeight: 'bold',
-        color: '#fff',
+        color: Colors.white,
     },
     modalLabel: {
-        fontSize: 16,
-        color: '#888',
-        marginBottom: 12,
+        fontSize: 14,
+        color: '#999',
+        marginBottom: 16,
         fontWeight: '600',
+        textTransform: 'uppercase',
     },
     modalCategories: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 10,
-        marginBottom: 24,
+        gap: 12,
+        marginBottom: 32,
     },
-    modalCategoryChip: {
-        marginBottom: 4,
+    categoryChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2A2A2A',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 30,
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
+    categoryChipActive: {
+        backgroundColor: Colors.statusGreen,
+    },
+    categoryText: {
+        color: '#ccc',
+        fontSize: 14,
+        fontWeight: '500',
+    },
+    categoryTextActive: {
+        color: Colors.matteBlack,
+        fontWeight: '700',
     },
     applyBtn: {
-        backgroundColor: '#39E29B',
-        paddingVertical: 14,
-        borderRadius: 14,
+        backgroundColor: Colors.primary,
+        paddingVertical: 16,
+        borderRadius: 20,
         alignItems: 'center',
+        // Shadow/Glow
+        shadowColor: Colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 6,
     },
     applyBtnText: {
-        color: '#000',
+        color: Colors.matteBlack,
         fontSize: 16,
         fontWeight: 'bold',
     },

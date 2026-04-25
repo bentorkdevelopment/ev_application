@@ -10,6 +10,11 @@ const Colors = {
     primaryContainer: '#39e29b',
     onPrimaryContainer: '#09231a',
 
+    // Status Colors
+    statusGreen: '#00E676',
+    statusRed: '#FF4213',
+    statusOrange: '#FF9800',
+
     // Glass Effect Tokens
     glassBgLight: 'rgba(255, 255, 255, 0.042)',
     glassBgDark: 'rgba(48, 48, 48, 0.55)',
@@ -17,6 +22,9 @@ const Colors = {
 
     glassBorderLight: 'rgba(255, 255, 255, 0.25)',
     glassBorderDark: 'rgba(255, 255, 255, 0.15)',
+
+    // Gradient Palette
+    primaryGradient: ['#39E29B', '#008f45'],
 };
 
 const Metrics = {
@@ -28,13 +36,14 @@ const Metrics = {
 
 const Fonts = {
     // Typography
-    // Note: React Native uses font family names directly. Ensure 'Inter' is linked if you use it.
-    // For now, these are standard system font stacks or placeholders.
-    primary: 'System', // Replace with 'Inter' if linked
+    // Note: Ensure 'Montserrat-Regular.ttf' and 'Montserrat-SemiBold.ttf' are in src/assets/fonts and linked.
+    primary: 'Montserrat',
     weightLight: '300',
-    weightRegular: '400',
+    weightRegular: '400', // Mapping 450 to standard Regular 400 for compatibility
+    weightNormal: '400',  // Explicit alias for "normal text" request (450 -> 400)
     weightMedium: '500',
-    weightSemibold: '600',
+    weightSemibold: '600', // Title weight
+    weightTitle: '600',    // Explicit alias for "title" request
     weightBold: '700',
     weightExtrabold: '800',
     weightBlack: '900',

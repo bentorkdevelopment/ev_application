@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Phone, ChevronLeft, ArrowRight, CheckCircle, Smartphone } from 'lucide-react-native';
+import { Phone, ChevronLeft, ArrowRight, Lock, Eye, EyeOff, Smartphone } from 'lucide-react-native';
 import { useAlert } from '../context/AlertContext';
-import { authApi } from '../services/api';
+import { authApi, userApi } from '../services/api';
+import { authService } from '../services/auth';
 
 export default function OtpScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
@@ -11,12 +12,12 @@ export default function OtpScreen({ navigation, route }) {
     const googleUser = route.params?.googleUser;
 
     // UI State
-    const [step, setStep] = useState(1); // 1: Phone Number (and Register if Google), 2: OTP (Legacy/Hidden)
     const [loading, setLoading] = useState(false);
 
     // Form Data
     const [phoneNumber, setPhoneNumber] = useState('');
-    const [otp, setOtp] = useState('');
+    const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
 
     const handleAction = async () => {
         // Basic validation
@@ -25,9 +26,14 @@ export default function OtpScreen({ navigation, route }) {
             return;
         }
 
+        if (!googleUser && !password) {
+            showAlert("Missing Password", "Please enter your password.");
+            return;
+        }
+
         setLoading(true);
 
-        // CASE 1: Google User - Register DIRECTLY (No OTP)
+        // CASE 1: Google User - Register DIRECTLY
         if (googleUser) {
             console.log("Completing Google Sign Up for:", googleUser.email, "Mobile:", phoneNumber);
 
@@ -46,17 +52,41 @@ export default function OtpScreen({ navigation, route }) {
                 console.log("Registration Success:", response);
                 setLoading(false);
 
-                showAlert("Success", "Account created successfully!", [
-                    {
-                        text: "Continue to Home",
-                        onPress: () => {
-                            navigation.reset({
-                                index: 0,
-                                routes: [{ name: 'Home' }],
-                            });
-                        }
+                // If the response includes a token, we can auto-login the user
+                if (response && response.token) {
+                    await authService.setToken(response.token);
+                    const userData = {
+                        id: response.id || response.userId,
+                        name: response.name || googleUser.name || 'Google User',
+                        email: response.email || googleUser.email,
+                        mobile: response.mobile || phoneNumber
+                    };
+                    await authService.setUser(userData);
+                }
+
+                // Navigate to target or Home
+                const { postLoginTarget: plt, postLoginParams: plp } = route.params || {};
+                const tcAccepted = await authService.hasAcceptedTerms();
+                if (plt) {
+                    if (!tcAccepted) {
+                        navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'TermsConsent', params: { nextScreen: plt, nextParams: plp } }]
+                        });
+                    } else {
+                        navigation.replace(plt, plp);
                     }
-                ]);
+                } else if (!tcAccepted) {
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'TermsConsent', params: { nextScreen: 'Home' } }],
+                    });
+                } else {
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'Home' }],
+                    });
+                }
             } catch (error) {
                 setLoading(false);
                 console.error("Registration Failed:", error);
@@ -66,73 +96,119 @@ export default function OtpScreen({ navigation, route }) {
             return;
         }
 
-        // CASE 2: Legacy Mobile Login (If ever used) - Send OTP
-        console.log("Sending OTP to:", phoneNumber);
-
-        setTimeout(() => {
-            setLoading(false);
-            setStep(2);
-            // In a real app, you might auto-fill the OTP or show a toast
-            showAlert("Code Sent", `We've sent a text to +91 ${phoneNumber}`);
-        }, 1500);
-    };
-
-    const handleVerifyOtp = async () => {
-        if (!otp || otp.length < 4) {
-            showAlert("Invalid Code", "Please enter the valid 4-digit code.");
-            return;
-        }
-
-        setLoading(true);
-        console.log("Verifying OTP:", otp, "for number:", phoneNumber);
+        // CASE 2: Phone Number + Password Login
+        console.log("Attempting Phone Login for:", phoneNumber);
 
         try {
-            if (googleUser) {
-                // GOOGLE SIGN UP COMPLETION
-                console.log("Completing Google Sign Up for:", googleUser.email);
+            const response = await authApi.login(phoneNumber, password);
 
-                // Generate a random strong password for the user since they use Google Login
-                const randomPassword = `Google_${Math.random().toString(36).slice(-8)}!A1`;
+            if (response && response.token) {
+                await processLoginSuccess(response);
+            } else {
+                throw new Error("Invalid response from server.");
+            }
+        } catch (error) {
+            setLoading(false);
+            console.error("Phone Login Failed:", error);
+            const msg = error.userMessage || error.response?.data?.message || "Invalid credentials.";
+            showAlert("Login Failed", msg);
+        }
+    };
 
-                const response = await authApi.register({
-                    name: googleUser.name || 'Google User',
-                    email: googleUser.email,
-                    mobile: phoneNumber,
-                    password: randomPassword,
-                    confirmPassword: randomPassword
-                });
+    const processLoginSuccess = async (response) => {
+        try {
+            // 1. Clear old data
+            await authService.logout();
 
-                console.log("Registration Success:", response);
+            // 2. Save new Token
+            const token = response.token;
+            if (!token) {
+                throw new Error("No token received.");
+            }
+            await authService.setToken(token);
 
-                // Auto Login or Redirect
-                setLoading(false);
-                showAlert("Success", "Account verified and created successfully!", [
-                    {
-                        text: "Continue to Home",
-                        onPress: () => {
-                            navigation.reset({
-                                index: 0,
-                                routes: [{ name: 'Home' }],
-                            });
+            // 3. Get User Details
+            let userData = {
+                id: response.id || response.userId,
+                name: response.name,
+                email: response.email,
+                imageUrl: response.imageUrl,
+                mobile: response.mobile
+            };
+
+            // If critical data is missing, try to fetch using mobile/email if available
+            // IMPORTANT: Phone login might not return email in immediate response if it's minimal
+            if (!userData.name) {
+                try {
+                    // Try fetching by Email first if we have it
+                    if (userData.email) {
+                        const userDetails = await userApi.getUserDetails(userData.email);
+                        userData = { ...userData, ...userDetails };
+                    }
+                    // If no email in response, but we have phone number input
+                    else if (phoneNumber) {
+                        try {
+                            // Try to get details by mobile - assuming API supports it or we can find another way
+                            // The current userApi.getUserDetails takes 'email'. 
+                            // If backend supports getByMobile, we should use that. 
+                            // If not, we might only have partial data.
+
+                            // Let's assume for now we might need to rely on what we have 
+                            // OR try to fetch by mobile if we add that endpoint support.
+                            // Since we can't change backend, we must rely on what login returns.
+
+                            // However, 'authApi.login' usually returns full user object. 
+                            // If it's returning partial, maybe we can use a different call.
+
+                            // FALLBACK: If we really can't get name, use Mobile as name
+                            if (!userData.name) userData.name = phoneNumber;
+                        } catch (e) {
+                            console.warn("Could not fetch details by mobile");
                         }
                     }
-                ]);
+                } catch (err) {
+                    console.warn("Failed to fetch user details after login:", err);
+                }
+            }
 
+            // Ensure we at least have an ID and some Identifier
+            if (!userData.id) {
+                // Try to decode token if we had a library, but we don't.
+                // We must rely on response.id
+                console.warn("Login response missing User ID");
+            }
+
+            await authService.setUser(userData);
+
+            // 4. FCM Token Sync (Send to Backend)
+            try {
+                const { getFCMToken } = require('../services/fcmService');
+                getFCMToken(); // Run in background
+            } catch (fcmErr) {
+                console.warn("FCM sync error after OTP login:", fcmErr);
+            }
+
+            // 5. Navigation
+            setLoading(false);
+
+            // Check T&C acceptance before navigating
+            const tcAccepted = await authService.hasAcceptedTerms();
+
+            if (!tcAccepted) {
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'TermsConsent', params: { nextScreen: 'Home' } }],
+                });
             } else {
-                // STANDARD MOBILE LOGIN MOCK
-                setTimeout(() => {
-                    setLoading(false);
-                    showAlert("Success", "Verified successfully!", [
-                        { text: "Continue", onPress: () => navigation.replace('Home') }
-                    ]);
-                }, 2000);
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Home' }],
+                });
             }
 
         } catch (error) {
             setLoading(false);
-            console.error("Verification/Registration Failed:", error);
-            const msg = error.userMessage || error.response?.data || "Verification failed. Please try again.";
-            showAlert("Error", typeof msg === 'string' ? msg : JSON.stringify(msg));
+            showAlert("Login Error", "Failed to process login session.");
         }
     };
 
@@ -148,7 +224,7 @@ export default function OtpScreen({ navigation, route }) {
                 {/* Back Button */}
                 <TouchableOpacity
                     style={styles.backBtn}
-                    onPress={() => step === 2 ? setStep(1) : navigation.goBack()}
+                    onPress={() => navigation.goBack()}
                 >
                     <ChevronLeft size={24} color="#fff" />
                 </TouchableOpacity>
@@ -159,93 +235,75 @@ export default function OtpScreen({ navigation, route }) {
                         <Smartphone size={32} color="#39E29B" />
                     </View>
                     <Text style={styles.title}>
-                        {googleUser ? "Complete Profile" : (step === 1 ? "Login with Phone" : "Verify Number")}
+                        {googleUser ? "Complete Profile" : "Login with Phone"}
                     </Text>
                     <Text style={styles.subtitle}>
                         {googleUser
                             ? "Please enter your mobile number to complete registration."
-                            : (step === 1 ? "Enter your mobile number to complete verification." : `Enter the 4-digit code sent to +91 ${phoneNumber}`)
+                            : "Enter your mobile number and password to login."
                         }
                     </Text>
                 </View>
 
-                {/* Form Step 1: Phone Number */}
-                {step === 1 && (
-                    <View style={styles.formContainer}>
-                        <Text style={styles.inputLabel}>Mobile Number</Text>
-                        <View style={styles.inputWrapper}>
-                            <Phone size={20} color="#888" style={styles.inputIcon} />
-                            <Text style={styles.countryCode}>+91</Text>
-                            <View style={styles.verticalDivider} />
-                            <TextInput
-                                style={styles.input}
-                                placeholder="00000 00000"
-                                placeholderTextColor="#666"
-                                value={phoneNumber}
-                                onChangeText={(text) => setPhoneNumber(text.replace(/[^0-9]/g, ''))}
-                                keyboardType="number-pad"
-                                maxLength={10}
-                            />
-                        </View>
-
-                        <TouchableOpacity
-                            style={styles.actionBtn}
-                            onPress={handleAction}
-                            disabled={loading}
-                        >
-                            {loading ? (
-                                <ActivityIndicator color="#000" />
-                            ) : (
-                                <View style={styles.btnContent}>
-                                    <Text style={styles.btnText}>{googleUser ? "Complete Sign Up" : "Send Code"}</Text>
-                                    <ArrowRight size={20} color="#000" style={{ marginLeft: 8 }} />
-                                </View>
-                            )}
-                        </TouchableOpacity>
+                {/* Form */}
+                <View style={styles.formContainer}>
+                    <Text style={styles.inputLabel}>Mobile Number</Text>
+                    <View style={styles.inputWrapper}>
+                        <Phone size={20} color="#888" style={styles.inputIcon} />
+                        <Text style={styles.countryCode}>+91</Text>
+                        <View style={styles.verticalDivider} />
+                        <TextInput
+                            style={styles.input}
+                            placeholder="00000 00000"
+                            placeholderTextColor="#666"
+                            value={phoneNumber}
+                            onChangeText={(text) => setPhoneNumber(text.replace(/[^0-9]/g, ''))}
+                            keyboardType="number-pad"
+                            maxLength={10}
+                        />
                     </View>
-                )}
 
-                {/* Form Step 2: OTP Input */}
-                {step === 2 && (
-                    <View style={styles.formContainer}>
-                        <Text style={styles.inputLabel}>Verification Code</Text>
-                        <View style={styles.inputWrapper}>
-                            <CheckCircle size={20} color="#888" style={styles.inputIcon} />
-                            <TextInput
-                                style={[styles.input, { letterSpacing: 5, fontSize: 18 }]}
-                                placeholder="- - - -"
-                                placeholderTextColor="#666"
-                                value={otp}
-                                onChangeText={(text) => setOtp(text.replace(/[^0-9]/g, ''))}
-                                keyboardType="number-pad"
-                                maxLength={6}
-                                autoFocus
-                            />
-                        </View>
+                    {/* Password Input (Only for Login) */}
+                    {!googleUser && (
+                        <>
+                            <Text style={styles.inputLabel}>Password</Text>
+                            <View style={styles.inputWrapper}>
+                                <Lock size={20} color="#888" style={styles.inputIcon} />
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Password"
+                                    placeholderTextColor="#666"
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    secureTextEntry={!showPassword}
+                                />
+                                <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                                    {showPassword ? (
+                                        <EyeOff size={20} color="#888" />
+                                    ) : (
+                                        <Eye size={20} color="#888" />
+                                    )}
+                                </TouchableOpacity>
+                            </View>
+                        </>
+                    )}
 
-                        <TouchableOpacity
-                            style={styles.actionBtn}
-                            onPress={handleVerifyOtp}
-                            disabled={loading}
-                        >
-                            {loading ? (
-                                <ActivityIndicator color="#000" />
-                            ) : (
-                                <Text style={styles.btnText}>Verify & {googleUser ? 'Register' : 'Login'}</Text>
-                            )}
-                        </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.actionBtn}
+                        onPress={handleAction}
+                        disabled={loading}
+                    >
+                        {loading ? (
+                            <ActivityIndicator color="#000" />
+                        ) : (
+                            <View style={styles.btnContent}>
+                                <Text style={styles.btnText}>{googleUser ? "Complete Sign Up" : "Login"}</Text>
+                                <ArrowRight size={20} color="#000" style={{ marginLeft: 8 }} />
+                            </View>
+                        )}
+                    </TouchableOpacity>
+                </View>
 
-                        <TouchableOpacity
-                            style={styles.resendBtn}
-                            onPress={() => {
-                                setOtp('');
-                                showAlert("Sent!", "New code sent.");
-                            }}
-                        >
-                            <Text style={styles.resendText}>Resend Code</Text>
-                        </TouchableOpacity>
-                    </View>
-                )}
             </ScrollView>
         </KeyboardAvoidingView>
     );
@@ -360,12 +418,5 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
     },
-    resendBtn: {
-        marginTop: 20,
-        alignItems: 'center',
-    },
-    resendText: {
-        color: '#888',
-        fontSize: 14,
-    },
 });
+

@@ -1,94 +1,105 @@
+import { Platform } from 'react-native';
 import messaging from '@react-native-firebase/messaging';
-import { PermissionsAndroid, Platform, Alert } from 'react-native';
-
-// Import config from env if needed (e.g. for creating channels or handling data)
-// import { FCM_TOPIC } from '@env';
-
+import { notificationApi } from './api';
+import { authService } from './auth';
 import notifee, { AndroidImportance } from '@notifee/react-native';
 
 export const requestUserPermission = async () => {
     try {
-        if (Platform.OS === 'ios') {
-            const authStatus = await messaging().requestPermission();
-            const enabled =
-                authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-                authStatus === messaging.AuthorizationStatus.PROVISIONAL;
-            if (enabled) {
-                console.log('Authorization status:', authStatus);
-                return true;
-            }
-        } else if (Platform.OS === 'android') {
-            const granted = await PermissionsAndroid.request(
-                PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
-            );
-            if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-                console.log('Notification permission granted');
-                return true;
-            }
+        const authStatus = await messaging().requestPermission();
+        const enabled =
+            authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+            authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+
+        if (enabled) {
+            console.log('[FCM] Authorization status:', authStatus);
         }
+        return enabled;
     } catch (error) {
-        console.warn('Permission request error:', error);
+        console.error('[FCM] Permission Request Error:', error);
+        return false;
     }
-    return false;
 };
 
 export const getFCMToken = async () => {
     try {
+        // 1. Get token from Firebase
         // Register device (iOS specific, safe to call on Android)
-        if (!messaging().isDeviceRegisteredForRemoteMessages) {
+        if (Platform.OS === 'ios' && !messaging().isDeviceRegisteredForRemoteMessages) {
             await messaging().registerDeviceForRemoteMessages();
         }
 
         const token = await messaging().getToken();
-        if (token) {
-            console.log('<<< FCM Token:', token);
-            // TODO: Send this token to your backend via API
-            // await api.post('/users/fcm-token', { token });
-        } else {
-            console.log('No FCM token received');
+        if (!token) {
+            console.log('[FCM] No token received from Firebase');
+            return null;
         }
+
+        console.log('<<< Firebase FCM Token:', token);
+
+        // 2. Sync with Backend if user is logged in
+        const user = await authService.getUser();
+        if (user && user.id) {
+            console.log(`[FCM] Syncing token for user ${user.id} to backend...`);
+            try {
+                await notificationApi.registerFcmToken(user.id, token);
+                console.log('[FCM] Token registered successfully with backend');
+            } catch (apiErr) {
+                console.warn('[FCM] Failed to register token with backend:', apiErr.message);
+            }
+        }
+
         return token;
     } catch (error) {
-        console.error('FCM Token Error:', error);
+        console.warn('[FCM] Error getting/syncing FCM token:', error.message);
+        return null;
     }
 };
 
 export const NotificationListener = () => {
     // 1. Foreground Message Handler
     const unsubscribe = messaging().onMessage(async remoteMessage => {
-        console.log('A new FCM message arrived!', JSON.stringify(remoteMessage));
+        console.log('[FCM] Foreground Message:', JSON.stringify(remoteMessage));
 
-        // Display Notification using Notifee
         try {
-            const channelId = await notifee.createChannel({
-                id: 'default',
-                name: 'Default Channel',
-                importance: AndroidImportance.HIGH,
-            });
+            // Get prospective channel ID from payload
+            const channelId = remoteMessage.data?.channelId || remoteMessage.notification?.android?.channelId;
+            
+            if (!channelId) {
+                console.log('[FCM] No channelId specified in payload. Skipping notification.');
+                return;
+            }
 
+            // CHECK: Does this channel exist on the device?
+            const channel = await notifee.getChannel(channelId);
+            if (!channel) {
+                console.warn(`[FCM] BLOCKING: Channel ID "${channelId}" does not exist on this device. Aborting display.`);
+                return;
+            }
+
+            // If it exists, display the notification
             await notifee.displayNotification({
-                title: remoteMessage.notification?.title || 'New Notification',
-                body: remoteMessage.notification?.body || 'You have a new update',
+                title: remoteMessage.notification?.title || remoteMessage.data?.title || 'New Update',
+                body: remoteMessage.notification?.body || remoteMessage.data?.body || 'You have a new update from Bentork',
                 android: {
-                    channelId,
-                    // smallIcon: 'ic_launcher', // default
+                    channelId: channelId,
+                    importance: AndroidImportance.HIGH,
                     pressAction: {
                         id: 'default',
                     },
                 },
             });
         } catch (error) {
-            console.error('Notifee Error:', error);
+            console.error('[FCM] Notifee Error:', error);
         }
     });
 
     // 2. Background State Message (Tap on notification)
     messaging().onNotificationOpenedApp(remoteMessage => {
         console.log(
-            'Notification caused app to open from background state:',
+            '[FCM] Notification opened app from background state:',
             remoteMessage.notification,
         );
-        // Navigation logic can go here
     });
 
     // 3. Quit State Message (Tap on notification)
@@ -97,10 +108,9 @@ export const NotificationListener = () => {
         .then(remoteMessage => {
             if (remoteMessage) {
                 console.log(
-                    'Notification caused app to open from quit state:',
+                    '[FCM] Notification opened app from quit state:',
                     remoteMessage.notification,
                 );
-                // Navigation logic can go here
             }
         });
 
@@ -108,9 +118,42 @@ export const NotificationListener = () => {
 };
 
 // Background Handler
-// Ensure this is imported in index.js to run in background
 export const setupBackgroundHandler = () => {
     messaging().setBackgroundMessageHandler(async remoteMessage => {
-        console.log('Message handled in the background!', remoteMessage);
+        console.log('[FCM] Background Message Received:', JSON.stringify(remoteMessage));
+
+        try {
+            // Check channel existence even in background (requires Data message for 100% control)
+            const channelId = remoteMessage.data?.channelId || remoteMessage.notification?.android?.channelId;
+            
+            if (channelId) {
+                const channel = await notifee.getChannel(channelId);
+                if (!channel) {
+                    console.log(`[FCM] BLOCKING BACKGROUND: Channel ID "${channelId}" is invalid. Suppressing display.`);
+                    return; // Prevent manual display if we were going to show one
+                }
+            } else {
+                console.log('[FCM] No channelId in Background message.');
+                return;
+            }
+
+            // NOTE: If this is a "Notification" message, the system already displayed it 
+            // if we are in the background. To have NO notification shown for invalid channels,
+            // always send messages as "Data only" (omit notification block).
+            
+            // For data messages, we display manually:
+            if (!remoteMessage.notification) {
+                await notifee.displayNotification({
+                    title: remoteMessage.data?.title || 'New Update',
+                    body: remoteMessage.data?.body || 'Check the app for details',
+                    android: {
+                        channelId: channelId,
+                        pressAction: { id: 'default' },
+                    },
+                });
+            }
+        } catch (err) {
+            console.error('[FCM] Background Display Error:', err);
+        }
     });
 };

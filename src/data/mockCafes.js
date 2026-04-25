@@ -1,14 +1,15 @@
-export const MOCK_CAFES = [
-    // City 0: Pune
-    [
+
+export const MOCK_CAFES = {
+    'Pune': [
         {
             id: 'pune_1',
             name: 'Cafe Goodluck',
             rating: 4.5,
             vicinity: 'Deccan Gymkhana, Pune',
             geometry: { location: { lat: 18.5167, lng: 73.8412 } },
-            photos: [{ photo_reference: null }], // Placeholder
-            isOpen: true
+            photos: [{ photo_reference: null }],
+            isOpen: true,
+            type: 'Cafe'
         },
         {
             id: 'pune_2',
@@ -17,20 +18,41 @@ export const MOCK_CAFES = [
             vicinity: 'Sassoon Rd, Pune',
             geometry: { location: { lat: 18.5362, lng: 73.8741 } },
             photos: [{ photo_reference: null }],
-            isOpen: true
+            isOpen: true,
+            type: 'Cafe'
         },
         {
             id: 'pune_3',
+            name: 'Phoenix Market City',
+            rating: 4.6,
+            vicinity: 'Viman Nagar, Pune',
+            geometry: { location: { lat: 18.5621, lng: 73.9169 } },
+            photos: [{ photo_reference: null }],
+            isOpen: true,
+            type: 'Shopping mall'
+        },
+        {
+            id: 'pune_4',
+            name: 'Vaishali',
+            rating: 4.4,
+            vicinity: 'FC Road, Pune',
+            geometry: { location: { lat: 18.5189, lng: 73.8427 } },
+            photos: [{ photo_reference: null }],
+            isOpen: true,
+            type: 'Restaurant'
+        },
+        {
+            id: 'pune_5',
             name: 'German Bakery',
             rating: 4.3,
             vicinity: 'Koregaon Park, Pune',
             geometry: { location: { lat: 18.5388, lng: 73.8967 } },
             photos: [{ photo_reference: null }],
-            isOpen: true
+            isOpen: true,
+            type: 'Cafe'
         }
     ],
-    // City 1: Mumbai
-    [
+    'Mumbai': [
         {
             id: 'mumbai_1',
             name: 'Leopold Cafe',
@@ -38,7 +60,8 @@ export const MOCK_CAFES = [
             vicinity: 'Colaba Causeway, Mumbai',
             geometry: { location: { lat: 18.9233, lng: 72.8317 } },
             photos: [{ photo_reference: null }],
-            isOpen: true
+            isOpen: true,
+            type: 'Cafe'
         },
         {
             id: 'mumbai_2',
@@ -47,20 +70,11 @@ export const MOCK_CAFES = [
             vicinity: 'Colaba, Mumbai',
             geometry: { location: { lat: 18.9248, lng: 72.8322 } },
             photos: [{ photo_reference: null }],
-            isOpen: true
-        },
-        {
-            id: 'mumbai_3',
-            name: 'Kyani & Co.',
-            rating: 4.6,
-            vicinity: 'Marine Lines, Mumbai',
-            geometry: { location: { lat: 18.9442, lng: 72.8290 } },
-            photos: [{ photo_reference: null }],
-            isOpen: true
+            isOpen: true,
+            type: 'Cafe'
         }
     ],
-    // City 2: Bangalore
-    [
+    'Bangalore': [
         {
             id: 'blr_1',
             name: 'Vidyarthi Bhavan',
@@ -68,20 +82,11 @@ export const MOCK_CAFES = [
             vicinity: 'Basavanagudi, Bangalore',
             geometry: { location: { lat: 12.9461, lng: 77.5714 } },
             photos: [{ photo_reference: null }],
-            isOpen: true
-        },
-        {
-            id: 'blr_2',
-            name: 'Koshy\'s',
-            rating: 4.1,
-            vicinity: 'St. Marks Road, Bangalore',
-            geometry: { location: { lat: 12.9734, lng: 77.6015 } },
-            photos: [{ photo_reference: null }],
-            isOpen: true
+            isOpen: true,
+            type: 'Rest stop'
         }
     ],
-    // City 3: Delhi
-    [
+    'Delhi': [
         {
             id: 'del_1',
             name: 'United Coffee House',
@@ -89,16 +94,8 @@ export const MOCK_CAFES = [
             vicinity: 'Connaught Place, New Delhi',
             geometry: { location: { lat: 28.6328, lng: 77.2197 } },
             photos: [{ photo_reference: null }],
-            isOpen: true
-        },
-        {
-            id: 'del_2',
-            name: 'Cafe Lota',
-            rating: 4.5,
-            vicinity: 'E-Block, New Delhi',
-            geometry: { location: { lat: 28.6139, lng: 77.2422 } },
-            photos: [{ photo_reference: null }],
-            isOpen: true
+            isOpen: true,
+            type: 'Cafe'
         }
     ]
-];
+};

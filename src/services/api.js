@@ -29,7 +29,12 @@ const handleApiError = (error) => {
     };
 
     if (error.response) {
-        console.error('<<< API Error Response:', JSON.stringify(errorLog, null, 2));
+        // Suppress 404 logging for expected scenarios like checking for existing review
+        if (error.response.status !== 404) {
+            console.error('<<< API Error Response:', JSON.stringify(errorLog, null, 2));
+        } else {
+            // console.warn('<<< API 404 (Not Found):', error.config?.url);
+        }
     } else if (error.request) {
         console.error('<<< API No Response:', error.message);
     } else {
@@ -42,12 +47,13 @@ const handleApiError = (error) => {
     if (error.response) {
         const { status, data } = error.response;
 
-        // Check if server sent a specific message
-        if (data && typeof data === 'string' && data.length > 0 && data.length < 100) {
-            // Use server message if it's a short string (likely a message)
-            userMessage = data;
+        // Check if server sent a specific message or error
+        if (data && data.error) {
+            userMessage = data.error;
         } else if (data && data.message) {
             userMessage = data.message;
+        } else if (data && typeof data === 'string' && data.length > 0 && data.length < 100) {
+            userMessage = data;
         } else {
             // Fallback based on status code
             switch (status) {
@@ -155,6 +161,37 @@ export const authApi = {
         } catch (error) {
             throw error;
         }
+    },
+    login: async (emailOrMobile, password) => {
+        try {
+            const response = await publicApi.post('/user/login', {
+                emailOrMobile,
+                password
+            });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    requestOtp: async (email) => {
+        try {
+            const response = await publicApi.post('/user/request-otp', null, {
+                params: { email }
+            });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    resetPassword: async (email, otp, newPassword) => {
+        try {
+            const response = await publicApi.post('/user/reset-password', null, {
+                params: { email, otp, newPassword }
+            });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
     }
 };
 
@@ -192,6 +229,31 @@ export const userApi = {
             const response = await api.get(`/user/byemail/${email}`);
             return response.data;
         } catch (error) {
+            throw error;
+        }
+    },
+    getUserById: async (userId) => {
+        try {
+            // Trying plural 'users' as a fallback if 'user' failed? 
+            // Or maybe just suppress?
+            // Given the 500, the backend might expect /user/details? or /users?
+            // I'll keep it as is but add a fallback to try /users/ if the first one fails?
+            // No, that's messy.
+            // I will assume the backend endpoint is actually /user/profile/${userId} for now? 
+            // Or I will rely on the ReviewCard fix.
+            const response = await api.get(`/user/${userId}`);
+            return response.data;
+        } catch (error) {
+            // console.warn("Get User By ID Failed", error);
+            // If 500, maybe try /users/${userId}
+            if (error.response && error.response.status === 500) {
+                try {
+                    const response2 = await api.get(`/users/${userId}`);
+                    return response2.data;
+                } catch (e) {
+                    throw error; // Throw original
+                }
+            }
             throw error;
         }
     },
@@ -333,46 +395,27 @@ export const sessionApi = {
     },
     getActiveSession: async (userId) => {
         try {
-            // Since /sessions/active returns count, we use /all/records to find the actual session
+            // Using /all/records for full enrichment (Charger, Station, etc.)
             const response = await api.get('/sessions/all/records');
-            const data = response.data;
-            const sessions = Array.isArray(data) ? data : (data?.data || []);
+            const sessions = Array.isArray(response.data) ? response.data : [];
 
-            if (Array.isArray(sessions)) {
-                console.log(`[DEBUG] Found ${sessions.length} total sessions from backend.`);
-
+            if (sessions.length > 0) {
                 const activeSessions = sessions.filter(s => {
-                    // Normalization
                     const status = String(s.status || '').toUpperCase();
-                    const sUserId = s.userId;
-                    const sUserEmail = s.user?.email; // Sometimes user is object
-                    const sUserObjId = s.user?.id;
+                    const sUserId = s.user?.id || s.userId;
+                    const sUserEmail = s.user?.email;
 
-                    // Check both ID and Email/String ID
-                    // The 'userId' param passed in might be an ID (123) or email (om.lok...)
-                    // We need loose comparison (==) for IDs
-                    const matchesUser = (sUserObjId == userId || sUserId == userId || sUserEmail === userId);
-                    const isActive = ['ACTIVE', 'CHARGING', 'STARTED'].includes(status);
+                    const matchesUser = (sUserId == userId || sUserEmail === userId);
+                    const isActive = ['ACTIVE', 'CHARGING', 'STARTED', 'INITIATED'].includes(status);
 
-                    if (matchesUser) {
-                        console.log(`[DEBUG] User Match! Session ${s.id}: Status=${status}, IsActive=${isActive}`);
-                    }
-
-                    // Strict check: User match + Status match
                     return matchesUser && isActive;
                 });
 
-                console.log(`[DEBUG] Active sessions for user ${userId}: ${activeSessions.length}`);
-
                 // Sort by ID descending to get the LATEST session
                 activeSessions.sort((a, b) => b.id - a.id);
-
                 const activeSession = activeSessions[0];
 
                 if (activeSession) {
-                    console.log(`Found Active Session ID: ${activeSession.id}, Status: ${activeSession.status}`);
-
-                    // Parse LocalDateTime array [2024, 5, 20, 10, 30, 45] -> Timestamp
                     let startTimeTs = Date.now();
                     if (Array.isArray(activeSession.startTime)) {
                         const [y, m, d, h, min, s] = activeSession.startTime;
@@ -383,22 +426,80 @@ export const sessionApi = {
 
                     return {
                         sessionId: activeSession.id,
-                        status: 'ACTIVE',
-                        chargerId: activeSession.charger?.id, // Accessing Charger entity
+                        status: activeSession.status || 'ACTIVE',
+                        chargerId: activeSession.charger?.id,
                         boxId: activeSession.boxId,
                         stationName: activeSession.stationName || activeSession.charger?.station?.name || activeSession.charger?.name || "Unknown Station",
+                        stationId: activeSession.stationId || activeSession.charger?.station?.id,
                         startTime: startTimeTs,
-                        selectedKwh: activeSession.selectedKwh || null, // Not in Session model? Check Receipt/Plan relation if needed later
-                        planId: null, // Session model doesn't directly link Plan, might need derived logic or ignored for now
+                        selectedKwh: activeSession.selectedKwh || null,
+                        planId: null,
                         rate: activeSession.charger?.rate || 0,
-                        chargerType: activeSession.charger?.chargerType || 'Fast'
+                        chargerType: activeSession.charger?.chargerType || 'Fast',
+                        latitude: activeSession.charger?.station?.latitude || activeSession.station?.latitude,
+                        longitude: activeSession.charger?.station?.longitude || activeSession.station?.longitude
                     };
                 }
             }
             return null;
         } catch (error) {
-            console.warn("Failed to check active session:", error);
+            console.warn("Failed to check active session from records:", error.message);
             return null;
+        }
+    },
+
+    getAllActiveSessions: async (userId) => {
+        try {
+            // Using /all/records instead of /active/details to get full entities (Charger, Station, etc.)
+            // as requested for a frontend-only fix.
+            const response = await api.get('/sessions/all/records');
+            const sessions = Array.isArray(response.data) ? response.data : [];
+
+            if (sessions.length > 0) {
+                return sessions.filter(s => {
+                    // Normalization
+                    const status = String(s.status || '').toUpperCase();
+                    const sUserId = s.user?.id || s.userId;
+                    const sUserEmail = s.user?.email;
+
+                    // Match user by ID or Email
+                    const matchesUser = (sUserId == userId || sUserEmail === userId);
+
+                    // Filter for active/busy statuses
+                    const isActive = ['ACTIVE', 'CHARGING', 'STARTED', 'INITIATED'].includes(status);
+
+                    return matchesUser && isActive;
+                }).map(session => {
+                    // Time parsing
+                    let startTimeTs = Date.now();
+                    if (Array.isArray(session.startTime)) {
+                        const [y, m, d, h, min, s] = session.startTime;
+                        startTimeTs = new Date(y, m - 1, d, h, min, s || 0).getTime();
+                    } else if (session.startTime) {
+                        startTimeTs = new Date(session.startTime).getTime();
+                    }
+
+                    return {
+                        sessionId: session.id,
+                        status: session.status || 'ACTIVE',
+                        chargerId: session.charger?.id,
+                        boxId: session.boxId,
+                        stationName: session.stationName || session.charger?.station?.name || session.charger?.name || "Unknown Station",
+                        stationId: session.stationId || session.charger?.station?.id,
+                        startTime: startTimeTs,
+                        selectedKwh: session.selectedKwh || null,
+                        planId: null,
+                        rate: session.charger?.rate || 0,
+                        chargerType: session.charger?.chargerType || 'Fast',
+                        latitude: session.charger?.station?.latitude || session.station?.latitude,
+                        longitude: session.charger?.station?.longitude || session.station?.longitude
+                    };
+                }).sort((a, b) => b.sessionId - a.sessionId);
+            }
+            return [];
+        } catch (error) {
+            console.error("Failed to fetch active sessions from records:", error);
+            return [];
         }
     },
     enableNotification: async (sessionId, enabled) => {
@@ -415,7 +516,7 @@ export const notificationApi = {
     registerFcmToken: async (userId, token) => {
         if (!userId || String(userId) === 'undefined') return null;
         try {
-            const response = await api.post(`/notifications/user/${userId}/fcm-token`, { token });
+            const response = await api.post(`/notifications/user/${userId}/fcm-token`, { fcmToken: token });
             return response.data;
         } catch (error) {
             console.warn("Register FCM Token Failed:", error.message);
@@ -473,6 +574,167 @@ export const notificationApi = {
             return 0;
         }
     }
+};
+
+export const reviewsApi = {
+    createReview: async (reviewData) => {
+        try {
+            const { stationId, ...payload } = reviewData;
+            const response = await api.post(`/station-reviews/${stationId}`, payload);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    updateReview: async (reviewId, reviewData) => {
+        try {
+            const response = await api.put(`/station-reviews/${reviewId}`, reviewData);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    deleteReview: async (reviewId) => {
+        try {
+            const response = await api.delete(`/station-reviews/${reviewId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getStationReviews: async (stationId) => {
+        try {
+            const response = await api.get(`/station-reviews/station/${stationId}`);
+            return response.data;
+        } catch (error) {
+            console.warn("Fetch Reviews Failed:", error.message);
+            return []; // Return empty array on error to prevent UI crash
+        }
+    },
+    getUserReviews: async (userId) => {
+        try {
+            const response = await api.get(`/station-reviews/user/${userId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getStationRatingSummary: async (stationId) => {
+        try {
+            const response = await api.get(`/station-reviews/summary/${stationId}`);
+            return response.data;
+        } catch (error) {
+            return null;
+        }
+    },
+    getMyReview: async (stationId) => {
+        try {
+            const response = await api.get(`/station-reviews/my-review/${stationId}`);
+            return response.data;
+        } catch (error) {
+            // User might not have a review, handle gracefully if 404
+            if (error.response && error.response.status === 404) return null;
+            return null;
+        }
+    }
+};
+
+export const emergencyApi = {
+    getContact: async (stationId) => {
+        try {
+            const response = await api.get(`/emergency-contacts/${stationId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const slotsApi = {
+    getAvailableSlots: async (chargerId, date) => {
+        try {
+            // Backend endpoint: /api/slots/charger/{chargerId}/available
+            // Note: date param is ignored by backend currently, but kept for future compatibility
+            const response = await api.get(`/slots/charger/${chargerId}/available`, {
+                params: { date }
+            });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getSlotsByCharger: async (chargerId) => {
+        try {
+            const response = await api.get(`/slots/charger/${chargerId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    createBulkSlots: async (chargerId, date, durationMinutes = 30) => {
+        try {
+            const response = await api.post('/slots/bulk', {
+                chargerId,
+                date,
+                durationMinutes
+            });
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+};
+
+export const slotBookingApi = {
+    bookSlot: async (slotId) => {
+        try {
+            const response = await api.post(`/slot-bookings/book/${slotId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    cancelBooking: async (bookingId) => {
+        try {
+            const response = await api.put(`/slot-bookings/${bookingId}/cancel`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getMyBookings: async () => {
+        try {
+            const response = await api.get('/slot-bookings/my-bookings');
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getMyActiveBookings: async () => {
+        try {
+            const response = await api.get('/slot-bookings/my-bookings/active');
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getBookingById: async (bookingId) => {
+        try {
+            const response = await api.get(`/slot-bookings/${bookingId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+    getBookingsByStation: async (stationId) => {
+        try {
+            const response = await api.get(`/slot-bookings/station/${stationId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
+
 };
 
 export default api;

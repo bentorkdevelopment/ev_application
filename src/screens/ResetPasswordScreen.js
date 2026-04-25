@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Platform, KeyboardAvoidingView, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Mail, Lock, ChevronLeft, KeyRound, CheckCircle, ArrowRight } from 'lucide-react-native';
+import { authApi } from '../services/api';
 
 export default function ResetPasswordScreen({ navigation }) {
     const insets = useSafeAreaInsets();
@@ -23,14 +24,15 @@ export default function ResetPasswordScreen({ navigation }) {
         }
 
         setLoading(true);
-        // Simulate API Call to send OTP
-        console.log("Sending OTP to:", email);
-
-        setTimeout(() => {
-            setLoading(false);
+        try {
+            await authApi.requestOtp(email);
             setStep(2);
             Alert.alert("Code Sent", `We've sent a verification code to ${email}`);
-        }, 1500);
+        } catch (error) {
+            Alert.alert("Request Failed", error.userMessage || "Could not send reset code. Please check your email.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleResetPassword = async () => {
@@ -48,15 +50,16 @@ export default function ResetPasswordScreen({ navigation }) {
         }
 
         setLoading(true);
-        // Simulate API Call to reset password
-        console.log("Resetting password for:", email, "with code:", otp);
-
-        setTimeout(() => {
-            setLoading(false);
+        try {
+            await authApi.resetPassword(email, otp, newPassword);
             Alert.alert("Success", "Your password has been reset successfully!", [
                 { text: "Login Now", onPress: () => navigation.navigate('Login') }
             ]);
-        }, 2000);
+        } catch (error) {
+            Alert.alert("Reset Failed", error.userMessage || "Could not reset password. Please check your verification code.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -109,9 +112,9 @@ export default function ResetPasswordScreen({ navigation }) {
                         </View>
 
                         <TouchableOpacity
-                            style={styles.actionBtn}
+                            style={[styles.actionBtn, (!email || loading) && styles.disabledBtn]}
                             onPress={handleSendCode}
-                            disabled={loading}
+                            disabled={loading || !email}
                         >
                             {loading ? (
                                 <ActivityIndicator color="#000" />
@@ -275,6 +278,9 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 8,
         elevation: 4,
+    },
+    disabledBtn: {
+        opacity: 0.5,
     },
     btnContent: {
         flexDirection: 'row',

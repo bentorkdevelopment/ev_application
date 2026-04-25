@@ -1,19 +1,62 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator, Animated, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, User, LogOut, Bell, Shield, Smartphone, Code } from 'lucide-react-native';
+import { ChevronDown, User, LogOut } from 'lucide-react-native';
 import { authService } from '../services/auth';
-import { sessionApi } from '../services/api'; // Added import
+import { sessionApi } from '../services/api';
 import { useAlert } from '../context/AlertContext';
+import { Colors } from '../styles/GlobalStyles';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function AccountsScreen({ navigation }) {
     const insets = useSafeAreaInsets();
     const [user, setUser] = useState(null);
     const { showAlert } = useAlert();
+    const [loggingOut, setLoggingOut] = useState(false);
+
+    // Animations
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
 
     useEffect(() => {
         loadUser();
+
+        // Enter Animation
+        Animated.parallel([
+            Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 300,
+                useNativeDriver: true,
+            }),
+            Animated.spring(slideAnim, {
+                toValue: 0,
+                damping: 20,
+                stiffness: 90,
+                useNativeDriver: true,
+            })
+        ]).start();
     }, []);
+
+    const closeSheet = () => {
+        // Exit Animation
+        Animated.parallel([
+            Animated.timing(fadeAnim, {
+                toValue: 0,
+                duration: 200,
+                useNativeDriver: true,
+            }),
+            Animated.timing(slideAnim, {
+                toValue: SCREEN_HEIGHT,
+                duration: 250,
+                useNativeDriver: true,
+            })
+        ]).start(() => {
+            if (navigation.canGoBack()) {
+                navigation.goBack();
+            }
+        });
+    };
 
     const loadUser = async () => {
         const userData = await authService.getUser();
@@ -21,8 +64,9 @@ export default function AccountsScreen({ navigation }) {
     };
 
     const performLogout = async () => {
+        setLoggingOut(true);
         await authService.logout();
-        // Reset navigation stack to Splash, which will likely redirect to Login
+        setLoggingOut(false);
         navigation.reset({
             index: 0,
             routes: [{ name: 'Splash' }],
@@ -81,42 +125,39 @@ export default function AccountsScreen({ navigation }) {
         }
     };
 
-    const SettingItem = ({ icon: Icon, title, subtitle, onPress, isDestructive = false }) => (
-        <TouchableOpacity style={styles.settingItem} onPress={onPress}>
-            <View style={styles.settingItemLeft}>
-                <View style={[styles.iconContainer, isDestructive && styles.destructiveIconContainer]}>
-                    <Icon size={22} color={isDestructive ? "#FF4444" : "#fff"} />
-                </View>
-                <View>
-                    <Text style={[styles.settingTitle, isDestructive && styles.destructiveText]}>{title}</Text>
-                    {subtitle && <Text style={styles.settingSubtitle}>{subtitle}</Text>}
-                </View>
-            </View>
-            {!isDestructive && <ChevronLight />}
-        </TouchableOpacity>
-    );
-
-    const ChevronLight = () => (
-        <View style={styles.chevronContainer}>
-            {/* Using simple text or icon equivalent if ChevronRight not wanted, but ChevronRight is standard */}
-            {/* Reusing the style from other screens usually involves ChevronRight */}
-        </View>
-    );
-
     return (
-        <View style={[styles.container, { paddingTop: insets.top }]}>
-            {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <ChevronLeft size={28} color="#fff" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Account</Text>
-                <View style={{ width: 28 }} />
-            </View>
+        <View style={[styles.container, { justifyContent: 'flex-end' }]}>
+            {/* Backdrop - animate opacity */}
+            <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={closeSheet}
+            >
+                <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]} />
+            </TouchableOpacity>
 
-            <ScrollView contentContainerStyle={styles.content}>
+            {/* Bottom Sheet Content - animate translation */}
+            <Animated.View style={[
+                styles.sheet,
+                {
+                    paddingBottom: insets.bottom + 20,
+                    transform: [{ translateY: slideAnim }]
+                }
+            ]}>
 
-                {/* User Profile Section */}
+                {/* Drag Handle */}
+                <View style={styles.handleContainer} pointerEvents="none">
+                    <View style={styles.handle} />
+                </View>
+
+                {/* Header Actions */}
+                <View style={styles.sheetHeader}>
+                    <TouchableOpacity onPress={closeSheet} style={styles.closeBtn}>
+                        <ChevronDown size={24} color="#666" />
+                    </TouchableOpacity>
+                </View>
+
+                {/* User Profile */}
                 <View style={styles.profileSection}>
                     <View style={styles.avatarContainer}>
                         {user?.imageUrl ? (
@@ -129,34 +170,27 @@ export default function AccountsScreen({ navigation }) {
                     <Text style={styles.userEmail}>{user?.email || 'email@example.com'}</Text>
                 </View>
 
-                {/* Settings Groups */}
-                <View style={styles.section}>
-                    <Text style={styles.sectionHeader}>Profile Settings</Text>
-                    <View style={styles.sectionContent}>
-                        <SettingItem icon={User} title="Edit Profile" subtitle="Name, Phone, Email" onPress={() => { }} />
-                        <SettingItem icon={Shield} title="Security" subtitle="Password, 2FA" onPress={() => { }} />
-                        <SettingItem icon={Bell} title="Notifications" subtitle="Push, Email, SMS" onPress={() => { }} />
-                    </View>
-                </View>
-
-                <View style={styles.section}>
-                    <Text style={styles.sectionHeader}>App Settings</Text>
-                    <View style={styles.sectionContent}>
-                        <SettingItem icon={Smartphone} title="Device Preferences" subtitle="Theme, Language" onPress={() => { }} />
-                    </View>
-                </View>
-
-
+                {/* Divider */}
+                <View style={styles.divider} />
 
                 {/* Logout Button */}
-                <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-                    <LogOut size={20} color="#FF4444" style={{ marginRight: 10 }} />
-                    <Text style={styles.logoutText}>Log Out</Text>
+                <TouchableOpacity
+                    style={styles.logoutButton}
+                    onPress={handleLogout}
+                    disabled={loggingOut}
+                >
+                    {loggingOut ? (
+                        <ActivityIndicator color="#FF4444" />
+                    ) : (
+                        <>
+                            <LogOut size={20} color="#FF4444" style={{ marginRight: 10 }} />
+                            <Text style={styles.logoutText}>Log Out</Text>
+                        </>
+                    )}
                 </TouchableOpacity>
 
                 <Text style={styles.versionText}>Version 1.0.0</Text>
-
-            </ScrollView>
+            </Animated.View>
         </View>
     );
 }
@@ -164,28 +198,34 @@ export default function AccountsScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#121212',
+        backgroundColor: 'transparent',
     },
-    header: {
-        marginTop: 20,
-        marginBottom: 20,
-        flexDirection: 'row',
+    backdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    sheet: {
+        backgroundColor: '#1E1E1E', // standard card/sheet color
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingHorizontal: 20,
+    },
+    handleContainer: {
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingBottom: 20,
+        paddingVertical: 10,
     },
-    backButton: {
+    handle: {
+        width: 40,
+        height: 5,
+        backgroundColor: '#333',
+        borderRadius: 3,
+    },
+    sheetHeader: {
+        alignItems: 'flex-end',
+        marginBottom: 10,
+    },
+    closeBtn: {
         padding: 5,
-    },
-    headerTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#fff',
-    },
-    content: {
-        paddingHorizontal: 20,
-        paddingBottom: 40,
     },
     profileSection: {
         alignItems: 'center',
@@ -201,7 +241,7 @@ const styles = StyleSheet.create({
         marginBottom: 15,
         overflow: 'hidden',
         borderWidth: 2,
-        borderColor: '#4CAF50', // Premium accent color
+        borderColor: Colors.primary || '#00E676',
     },
     avatarImage: {
         width: '100%',
@@ -217,64 +257,17 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#aaa',
     },
-    section: {
-        marginBottom: 25,
-    },
-    sectionHeader: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#888',
-        marginBottom: 10,
-        textTransform: 'uppercase',
-        letterSpacing: 1,
-    },
-    sectionContent: {
-        backgroundColor: '#1E1E1E',
-        borderRadius: 16,
-        overflow: 'hidden',
-    },
-    settingItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#2A2A2A',
-    },
-    settingItemLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    iconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 10,
+    divider: {
+        height: 1,
         backgroundColor: '#2A2A2A',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 15,
-    },
-    destructiveIconContainer: {
-        backgroundColor: 'rgba(255, 68, 68, 0.1)',
-    },
-    settingTitle: {
-        fontSize: 16,
-        fontWeight: '500',
-        color: '#fff',
-    },
-    destructiveText: {
-        color: '#FF4444',
-    },
-    settingSubtitle: {
-        fontSize: 12,
-        color: '#888',
-        marginTop: 2,
+        marginBottom: 30,
+        width: '100%',
     },
     logoutButton: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#1E1E1E',
+        backgroundColor: 'rgba(255, 68, 68, 0.1)',
         padding: 16,
         borderRadius: 16,
         marginBottom: 20,

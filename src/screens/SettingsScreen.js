@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView, StatusBar, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Bell, ShieldCheck, ChevronRight, Lock } from 'lucide-react-native';
+import { ChevronLeft, Bell, ShieldCheck, ChevronRight, Lock, User, Smartphone } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import PinPromptModal from '../components/PinPromptModal';
 import ReactNativeBiometrics from 'react-native-biometrics';
@@ -123,9 +123,31 @@ export default function SettingsScreen({ navigation }) {
 
             <ScrollView contentContainerStyle={styles.content}>
 
+                {/* Account Section */}
+                <Text style={styles.sectionTitle}>Account</Text>
+                <View style={styles.card}>
+                    <SettingItem
+                        icon={User}
+                        title="Edit Profile"
+                        onPress={() => navigation.navigate('OnboardingSurvey')}
+                    />
+                    <View style={styles.divider} />
+                    <SettingItem
+                        icon={Lock}
+                        title="Forgot Password"
+                        onPress={() => navigation.navigate('ResetPassword')}
+                    />
+                </View>
+
                 {/* General Options */}
                 <Text style={styles.sectionTitle}>General</Text>
                 <View style={styles.card}>
+                    <SettingItem
+                        icon={Smartphone}
+                        title="Device Preferences"
+                        onPress={() => Alert.alert("Preferences", "Theme: Dark Mode (Default)\nLanguage: English")}
+                    />
+                    <View style={styles.divider} />
                     <SettingItem
                         icon={Bell}
                         title="Notifications"
@@ -150,12 +172,6 @@ export default function SettingsScreen({ navigation }) {
                             Wallet transactions will be protected by your device's default security (PIN, Fingerprint).
                         </Text>
                     )}
-                </View>
-
-                {/* Other standard items */}
-                <Text style={styles.sectionTitle}>Account</Text>
-                <View style={styles.card}>
-                    <SettingItem icon={Lock} title="Change Password" onPress={() => navigation.navigate('ResetPassword')} />
                 </View>
 
             </ScrollView>

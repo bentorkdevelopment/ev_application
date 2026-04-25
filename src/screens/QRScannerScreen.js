@@ -1,5 +1,5 @@
 /* eslint-disable react-native/no-inline-styles */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View,
     Text,
@@ -10,10 +10,14 @@ import {
     TouchableOpacity,
     Dimensions,
     StatusBar,
-    AppState
+    AppState,
+    Vibration,
+    Animated,
+    Easing,
+    ActivityIndicator
 } from 'react-native';
 import { Camera } from 'react-native-camera-kit';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { ChevronLeft } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
@@ -23,14 +27,47 @@ const OVERLAY_COLOR = 'rgba(0, 0, 0, 0.6)';
 const QRScannerScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
+    const isFocused = useIsFocused();
     const [hasPermission, setHasPermission] = useState(false);
     const [scanned, setScanned] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    
+    // Scanning Line Animation
+    const scanLineAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        const lineAnimation = Animated.loop(
+            Animated.sequence([
+                Animated.timing(scanLineAnim, {
+                    toValue: 1,
+                    duration: 2000,
+                    easing: Easing.inOut(Easing.linear),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(scanLineAnim, {
+                    toValue: 0,
+                    duration: 2000,
+                    easing: Easing.inOut(Easing.linear),
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+        lineAnimation.start();
+        return () => lineAnimation.stop();
+    }, []);
 
     // Data passed from Home
     const stations = route.params?.stations || [];
     const allChargers = route.params?.allChargers || [];
-
     const appState = useRef(AppState.currentState);
+
+    // Reset scanner state when screen gains focus (e.g. Navigating back from Config)
+    useFocusEffect(
+        useCallback(() => {
+            setScanned(false);
+            setIsProcessing(false);
+        }, [])
+    );
 
     useEffect(() => {
         checkPermission();
@@ -117,10 +154,23 @@ const QRScannerScreen = () => {
                 const station = stations.find(s => s.id === charger.stationId);
 
                 if (station) {
-                    // Direct redirect without confirmation
-                    navigation.navigate('Home', {
-                        foundStationId: station.id,
-                        foundChargerId: charger.id
+                    // Success Vibration (Consolidated here for robustness)
+                    console.log("Vibrating for success...");
+                    Vibration.vibrate([0, 80, 40, 80]); // Robust double tap pattern
+                    
+                    // Redirect directly to Config screen as requested
+                    navigation.navigate('Config', {
+                        stationId: station.id,
+                        stationName: station.name || station.stationName || station.station_name,
+                        chargerId: charger.id,
+                        boxId: charger.ocppId || charger.boxId || charger.charger_id,
+                        chargerType: charger.chargerType || charger.type || charger.charger_id,
+                        maxPower: charger.maxPower || charger.power || '120',
+                        connectorType: charger.connectorType || 'CCS 2',
+                        status: charger.status || 'Available',
+                        latitude: station.latitude,
+                        longitude: station.longitude,
+                        rate: charger.rate || station.rate || '0'
                     });
                     return;
                 }
@@ -128,18 +178,23 @@ const QRScannerScreen = () => {
         }
 
         // If not found or logic failed
+        setIsProcessing(false);
         Alert.alert("Invalid QR", `Code: ${code}\nCould not find a matching charger.`, [
             { text: "Retry", onPress: () => setScanned(false) }
         ]);
     };
 
     const onReadCode = (event) => {
-        if (scanned) return;
+        if (scanned || isProcessing) return;
         const code = event.nativeEvent.codeStringValue || event.nativeEvent.code;
         if (!code) return;
 
+        Vibration.vibrate(30); // Very light initial catch pulse
+        setIsProcessing(true); // Immediate visual feedback
         setScanned(true);
-        processQRCode(code);
+        
+        // Use a tiny delay to allow the isProcessing ActivityIndicator to render
+        setTimeout(() => processQRCode(code), 50);
     };
 
     if (!hasPermission) {
@@ -167,8 +222,9 @@ const QRScannerScreen = () => {
             <StatusBar barStyle="light-content" backgroundColor="black" translucent />
 
             <Camera
+                key={isFocused ? 'focused' : 'blurred'}
                 style={styles.camera}
-                scanBarcode={true}
+                scanBarcode={isFocused && !scanned && !isProcessing}
                 onReadCode={onReadCode}
                 showFrame={false} // Custom Frame
                 laserColor='transparent' // Hide default laser
@@ -186,6 +242,30 @@ const QRScannerScreen = () => {
                         <View style={[styles.corner, styles.cornerTR]} />
                         <View style={[styles.corner, styles.cornerBL]} />
                         <View style={[styles.corner, styles.cornerBR]} />
+
+                        {/* Centered Circular Loading with Faded Highlight Backdrop */}
+                        {isProcessing && (
+                            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 16 }]}>
+                                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                                    <ActivityIndicator size="large" color="#ffffff" />
+                                </View>
+                            </View>
+                        )}
+
+                        {/* Dynamic Scanning Line */}
+                        {!isProcessing && (
+                            <Animated.View style={[
+                                styles.scanLine,
+                                {
+                                    transform: [{
+                                        translateY: scanLineAnim.interpolate({
+                                            inputRange: [0, 1],
+                                            outputRange: [0, SCAN_AREA_SIZE]
+                                        })
+                                    }]
+                                }
+                            ]} />
+                        )}
                     </View>
                     <View style={styles.overlaySide} />
                 </View>
@@ -346,6 +426,20 @@ const styles = StyleSheet.create({
         borderTopWidth: 0,
         borderRadius: 4,
         borderBottomRightRadius: 16
+    },
+    scanLine: {
+        width: '100%',
+        height: 2,
+        backgroundColor: '#00E676',
+        opacity: 0.5,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        elevation: 10,
+        shadowColor: '#00E676',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.8,
+        shadowRadius: 5,
     },
 });
 

@@ -101,8 +101,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     image: {
-        width: '100%',
-        height: '100%',
+        width: '50%',
+        height: '50%',
     },
     textContainer: {
         marginBottom: 32,
