@@ -1305,7 +1305,7 @@ export default function HomeScreenMain({ navigation, route }) {
                                             activeOpacity={0.9}
                                             onPress={() => handleCardPress(item)}
                                         >
-                                            <View style={{ borderRadius: 24, overflow: 'hidden', backgroundColor: Colors.matteBlack, zIndex: 1 }}>
+                                            <View style={{ borderRadius: 36, overflow: 'hidden', backgroundColor: Colors.matteBlack, zIndex: 1 }}>
                                                 {/* <BlurView
                                                 style={StyleSheet.absoluteFill}
                                                 blurType="dark"

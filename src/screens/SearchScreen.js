@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, StatusBar, Animated, Modal, Image } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, StatusBar, Animated, Modal, Image, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter, Star } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter, Star } from 'lucide-react-native';
 import BoltOutlineIcon from '../assets/icons/Outlined/bolt_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { stationsApi, chargersApi } from '../services/api';
@@ -20,7 +20,7 @@ const CATEGORIES = [
 
 const RECENT_SEARCHES_KEY = '@recent_searches';
 
-const StationItem = ({ station, index, onPress }) => {
+const StationItem = ({ station, index, onPress, connectorCount }) => {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(0.95)).current;
 
@@ -80,11 +80,9 @@ const StationItem = ({ station, index, onPress }) => {
                     </View>
 
                     <View style={styles.statusRow}>
-                        <View style={[styles.statusDot, { backgroundColor: getStatusColor(station.status) }]} />
-                        <Text style={[styles.statusText, { color: getStatusColor(station.status) }]}>
-                            {station.status || 'Unknown'}
-                        </Text>
-                        <Text style={styles.connectorInfo}>• 2 Connectors</Text>
+                        {connectorCount > 0 ? (
+                            <Text style={styles.connectorInfo}>{connectorCount} Connectors</Text>
+                        ) : null}
                     </View>
                 </View>
 
@@ -94,8 +92,7 @@ const StationItem = ({ station, index, onPress }) => {
                         <Star size={10} color="#FFD700" fill="#FFD700" style={{ marginRight: 2 }} />
                         <Text style={styles.ratingText}>4.5</Text>
                     </View>
-                    {/* Optional: Distance or Chevron */}
-                    {/* <ChevronRight size={20} color="#555" style={{ marginTop: 12 }} /> */}
+                    <ChevronRight size={18} color="#666" style={{ marginTop: 12, marginRight: 4 }} />
                 </View>
             </TouchableOpacity>
         </Animated.View>
@@ -113,10 +110,17 @@ export default function SearchScreen({ navigation }) {
     const [selectedStation, setSelectedStation] = useState(null);
     const [isSheetVisible, setIsSheetVisible] = useState(false);
     const [loading, setLoading] = useState(true);
+    const searchInputRef = useRef(null);
 
     useEffect(() => {
         loadStations();
         loadRecentSearches();
+        
+        // Auto-focus search on mount
+        const timer = setTimeout(() => {
+            searchInputRef.current?.focus();
+        }, 300);
+        return () => clearTimeout(timer);
     }, []);
 
     const loadRecentSearches = async () => {
@@ -204,6 +208,7 @@ export default function SearchScreen({ navigation }) {
     };
 
     const handleStationPress = (station) => {
+        Keyboard.dismiss();
         setSelectedStation(station);
         setIsSheetVisible(true);
     };
@@ -245,6 +250,7 @@ export default function SearchScreen({ navigation }) {
                     <View style={styles.searchContainer}>
                         <Search size={20} color="#888" style={{ marginRight: 10 }} />
                         <TextInput
+                            ref={searchInputRef}
                             style={styles.searchInput}
                             placeholder="Search location or station..."
                             placeholderTextColor="#666"
@@ -252,7 +258,6 @@ export default function SearchScreen({ navigation }) {
                             onChangeText={setSearchText}
                             onSubmitEditing={handleSearchSubmit}
                             returnKeyType="search"
-                            autoFocus={true}
                         />
                         {searchText.length > 0 && (
                             <TouchableOpacity
@@ -317,7 +322,17 @@ export default function SearchScreen({ navigation }) {
 
             <FlatList
                 data={filteredStations}
-                renderItem={({ item, index }) => <StationItem station={item} index={index} onPress={handleStationPress} />}
+                renderItem={({ item, index }) => {
+                    const stationChargers = allChargers.filter(c => (c.stationId || c.station_id || c.station) == item.id);
+                    return (
+                        <StationItem 
+                            station={item} 
+                            index={index} 
+                            onPress={handleStationPress} 
+                            connectorCount={stationChargers.length}
+                        />
+                    );
+                }}
                 keyExtractor={(item) => item.id.toString()}
                 ListHeaderComponent={renderHeader}
                 ListEmptyComponent={
@@ -517,17 +532,13 @@ const styles = StyleSheet.create({
     stationCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: Colors.cardBg,
+        backgroundColor: 'transparent',
         paddingVertical: 16,
-        paddingHorizontal: 12,
-        borderRadius: 20,
+        paddingHorizontal: 6,
+        borderRadius: 1,
         marginBottom: 14,
-        // Shadow
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 5,
-        elevation: 4,
+        borderBottomWidth: 1,
+        borderBottomColor: '#535353ff',
     },
     stationImageContainer: {
         width: 60,
@@ -535,7 +546,7 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         overflow: 'hidden',
         marginRight: 14,
-        backgroundColor: Colors.cardBg,
+        backgroundColor: Colors.matteBlack,
     },
     stationImage: {
         width: '100%',
@@ -614,7 +625,7 @@ const styles = StyleSheet.create({
     },
     modalContent: {
         backgroundColor: Colors.cardBg,
-        borderRadius: 28,
+        borderRadius: 36,
         padding: 24,
         paddingVertical: 32,
     },
@@ -665,9 +676,9 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     applyBtn: {
-        backgroundColor: Colors.primary,
+        backgroundColor: Colors.white,
         paddingVertical: 16,
-        borderRadius: 20,
+        borderRadius: 28,
         alignItems: 'center',
         // Shadow/Glow
         shadowColor: Colors.primary,

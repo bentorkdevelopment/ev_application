@@ -127,12 +127,6 @@ export default function SettingsScreen({ navigation }) {
                 <Text style={styles.sectionTitle}>Account</Text>
                 <View style={styles.card}>
                     <SettingItem
-                        icon={User}
-                        title="Edit Profile"
-                        onPress={() => navigation.navigate('OnboardingSurvey')}
-                    />
-                    <View style={styles.divider} />
-                    <SettingItem
                         icon={Lock}
                         title="Forgot Password"
                         onPress={() => navigation.navigate('ResetPassword')}

@@ -7,7 +7,6 @@ const USER_KEY = 'user_info';
 const ADMIN_TOKEN_KEY = 'admin_token';
 const TC_ACCEPTED_KEY = 'tc_accepted';
 const BG_LOCATION_CONSENT_KEY = 'bg_location_consent_shown';
-const USER_SURVEY_KEY = 'user_survey_data';
 
 export const authService = {
     setToken: async (token) => {
@@ -129,37 +128,6 @@ export const authService = {
         } catch (e) {
             console.error('Error saving BG location consent flag', e);
         }
-    },
-
-    setSurveyData: async (data) => {
-        try {
-            await AsyncStorage.setItem(USER_SURVEY_KEY, JSON.stringify(data));
-            // Setup personalized notification channels
-            if (data) {
-                await NotificationService.setupPersonaChannels(data);
-            }
-        } catch (e) {
-            console.error('Error saving user survey data', e);
-        }
-    },
-
-    getSurveyData: async () => {
-        try {
-            const data = await AsyncStorage.getItem(USER_SURVEY_KEY);
-            return data ? JSON.parse(data) : null;
-        } catch (e) {
-            console.error('Error getting user survey data', e);
-            return null;
-        }
-    },
-
-    isSurveyCompleted: async () => {
-        try {
-            const data = await AsyncStorage.getItem(USER_SURVEY_KEY);
-            return !!data;
-        } catch (e) {
-            return false;
-        }
-    },
+    }
 };
 

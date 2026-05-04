@@ -100,9 +100,9 @@ export default function UpdateRequiredModal({ visible, onUpdate }) {
                     >
                         <LinearGradient
                             colors={Colors.primaryGradient}
-                            locations={[0, 1]}
-                            start={{ x: 0, y: 0.5 }}
-                            end={{ x: 1, y: 0.5 }}
+                            locations={[1, 1]}
+                            start={{ x: 0.7, y: 0.9 }}
+                            end={{ x: 1, y: 0.9 }}
                             style={styles.gradient}
                         >
                             <Text style={styles.updateBtnText}>Update Now</Text>
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
     card: {
         width: '100%',
         backgroundColor: '#1C1C1E',
-        borderRadius: 20,
+        borderRadius: 28,
         padding: 24,
         alignItems: 'center',
         shadowColor: '#000',
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
     updateBtn: {
         width: '100%',
         height: 50,
-        borderRadius: 12,
+        borderRadius: 28,
         overflow: 'hidden',
     },
 

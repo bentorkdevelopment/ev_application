@@ -138,16 +138,17 @@ const styles = StyleSheet.create({
         letterSpacing: 1,
     },
     menuGroup: {
-        backgroundColor: Colors.matteBlack,
-        borderRadius: 20,
+        backgroundColor: '#141414ff',
+        borderRadius: 1,
         overflow: 'hidden',
     },
     // Menu Item
     menuItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 16,
-        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 14,
+        paddingHorizontal: 4,
         borderBottomWidth: 1,
         borderBottomColor: '#2A2A2A',
     },
