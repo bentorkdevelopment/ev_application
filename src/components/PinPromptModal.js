@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions, Animated, Vibration } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions, Vibration } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
 import { X, Delete } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -10,6 +11,33 @@ export default function PinPromptModal({ visible, onClose, onSuccess, mode = 've
     const [step, setStep] = useState(1); // 1: Enter, 2: Confirm (only for 'set' mode)
     const [firstPin, setFirstPin] = useState('');
     const [error, setError] = useState('');
+    const progress = useSharedValue(0);
+
+    useEffect(() => {
+        if (visible) {
+            progress.value = withTiming(1, { duration: 200 });
+        } else {
+            progress.value = withTiming(0, { duration: 200 });
+        }
+    }, [visible]);
+
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: progress.value,
+    }));
+
+    const cardStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [100, 0], Extrapolation.CLAMP);
+        const scale = interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP);
+        const opacity = interpolate(progress.value, [0, 0.5, 1], [0, 0, 1], Extrapolation.CLAMP);
+
+        return {
+            opacity,
+            transform: [
+                { translateY: withSpring(translateY, { damping: 1150, stiffness: 1000 }) },
+                { scale: withSpring(scale, { damping: 1150, stiffness: 1000 }) }
+            ],
+        };
+    });
 
     useEffect(() => {
         if (visible) {
@@ -102,15 +130,15 @@ export default function PinPromptModal({ visible, onClose, onSuccess, mode = 've
     );
 
     const renderKey = (num) => (
-        <TouchableOpacity style={styles.key} onPress={() => handlePress(num)} activeOpacity={0.7}>
+        <TouchableOpacity key={num} style={styles.key} onPress={() => handlePress(num)} activeOpacity={0.7}>
             <Text style={styles.keyText}>{num}</Text>
         </TouchableOpacity>
     );
 
     return (
-        <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-            <View style={styles.container}>
-                <View style={styles.content}>
+        <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+            <Animated.View style={[styles.container, overlayStyle]}>
+                <Animated.View style={[styles.content, cardStyle]}>
                     {/* Header */}
                     <View style={styles.header}>
                         {/* Only show close button if allowed (e.g. not forced verify) */}
@@ -152,26 +180,29 @@ export default function PinPromptModal({ visible, onClose, onSuccess, mode = 've
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
-            </View>
-        </Modal>
+                    </Animated.View>
+                </Animated.View>
+            </Modal>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#121212',
-        justifyContent: 'flex-end',
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
     },
     content: {
         backgroundColor: '#1E1E1E',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        padding: 20,
-        paddingBottom: 40,
-        height: '80%', // Occupy most of screen
+        borderRadius: 24,
+        padding: 24,
+        width: '100%',
+        maxWidth: 400,
         alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#333',
     },
     header: {
         width: '100%',

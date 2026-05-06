@@ -208,6 +208,7 @@ export default function ConfigScreen({ route }) {
     const [isStatusReady, setIsStatusReady] = useState(false);
     const tabAnim = useRef(new Animated.Value(initialTab === 'Charge' ? 0 : 1)).current;
     const pagerRef = useRef(null);
+    const today = new Date();
 
     // Refs
     const blob1Opacity = useRef(new Animated.Value(0)).current;
@@ -1003,16 +1004,17 @@ export default function ConfigScreen({ route }) {
                                                 slotDate = new Date(raw);
                                             }
                                             if (!isNaN(slotDate.getTime()) && !isSameDay(slotDate, today)) {
-                                                message = `Found ${availableSlots.length} slots from ${format(slotDate, 'MMM d')}, but none for today.`;
+                                                console.log("DEBUG: No slots found for today, found stale slots from previous date", slotDate);
+                                                message = `No slots available for today.`;
                                             }
                                         }
 
                                         return (
                                             <View style={{ alignItems: 'center', width: '100%', marginTop: 20 }}>
                                                 <Text style={styles.noSlotsText}>{message}</Text>
-                                                <TouchableOpacity onPress={fetchAvailableSlots} style={{ marginTop: 20, padding: 10 }}>
+                                                {/* <TouchableOpacity onPress={fetchAvailableSlots} style={{ marginTop: 20, padding: 10 }}>
                                                     <Text style={{ color: Colors.primaryContainer, fontSize: 13 }}>Refresh List</Text>
-                                                </TouchableOpacity>
+                                                </TouchableOpacity> */}
                                             </View>
                                         );
                                     }

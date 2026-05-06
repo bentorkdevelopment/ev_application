@@ -2,18 +2,18 @@
 // Play Store Compliant – Prominent Disclosure for Background Location
 // Shown ONCE per device install, just after the user first reaches HomeScreen.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
     Modal,
     View,
     Text,
     TouchableOpacity,
     StyleSheet,
-    Animated,
     Platform,
     PermissionsAndroid,
     Linking,
 } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, Navigation, Zap } from 'lucide-react-native';
 import { authService } from '../services/auth';
@@ -27,29 +27,33 @@ import { authService } from '../services/auth';
  */
 export default function BackgroundLocationModal({ visible, onDone }) {
     const insets = useSafeAreaInsets();
-    const scaleAnim = useRef(new Animated.Value(0.88)).current;
-    const opacityAnim = useRef(new Animated.Value(0)).current;
+    const progress = useSharedValue(0);
 
     useEffect(() => {
         if (visible) {
-            Animated.parallel([
-                Animated.spring(scaleAnim, {
-                    toValue: 1,
-                    tension: 60,
-                    friction: 8,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(opacityAnim, {
-                    toValue: 1,
-                    duration: 250,
-                    useNativeDriver: true,
-                }),
-            ]).start();
+            progress.value = withTiming(1, { duration: 200 });
         } else {
-            scaleAnim.setValue(0.88);
-            opacityAnim.setValue(0);
+            progress.value = withTiming(0, { duration: 200 });
         }
     }, [visible]);
+
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: progress.value,
+    }));
+
+    const cardStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [100, 0], Extrapolation.CLAMP);
+        const scale = interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP);
+        const opacity = interpolate(progress.value, [0, 0.5, 1], [0, 0, 1], Extrapolation.CLAMP);
+
+        return {
+            opacity,
+            transform: [
+                { translateY: withSpring(translateY, { damping: 1150, stiffness: 1000 }) },
+                { scale: withSpring(scale, { damping: 1150, stiffness: 1000 }) }
+            ],
+        };
+    });
 
     const handleAllow = async () => {
         // Mark shown first (so we don't loop even if permission fails)
@@ -105,16 +109,11 @@ export default function BackgroundLocationModal({ visible, onDone }) {
             statusBarTranslucent
             onRequestClose={() => { /* intentionally blocked */ }}
         >
-            {/* Dim overlay */}
-            <Animated.View style={[styles.overlay, { opacity: opacityAnim }]}>
+            <Animated.View style={[styles.overlay, overlayStyle]}>
                 <Animated.View
                     style={[
                         styles.card,
-                        {
-                            paddingBottom: insets.bottom > 0 ? insets.bottom + 12 : 24,
-                            transform: [{ scale: scaleAnim }],
-                            opacity: opacityAnim,
-                        },
+                        cardStyle,
                     ]}
                 >
                     {/* Icon Badge */}
@@ -190,19 +189,19 @@ const styles = StyleSheet.create({
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.72)',
-        justifyContent: 'flex-end',
+        justifyContent: 'center',
         alignItems: 'center',
+        padding: 20,
     },
 
     card: {
         width: '100%',
+        maxWidth: 400,
         backgroundColor: '#161616',
-        borderTopLeftRadius: 28,
-        borderTopRightRadius: 28,
-        paddingTop: 28,
-        paddingHorizontal: 24,
-        borderTopWidth: 1,
-        borderTopColor: 'rgba(57,226,155,0.18)',
+        borderRadius: 28,
+        padding: 28,
+        borderWidth: 1,
+        borderColor: 'rgba(57,226,155,0.18)',
     },
 
     iconBadge: {

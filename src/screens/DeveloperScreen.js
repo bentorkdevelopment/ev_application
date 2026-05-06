@@ -1,14 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Switch } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Switch, findNodeHandle } from 'react-native';
+import Animated, { useSharedValue, withTiming, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { authService } from '../services/auth';
-import { ChevronRight, ChevronLeft, Search, UserPlus, KeyRound, Smartphone, Layout, Code, Bell, Navigation, Car, TrendingUp, MapPin, Zap, FlaskConical, Shield, Database, Trash2, X } from 'lucide-react-native';
+import { ChevronRight, ChevronLeft, Search, UserPlus, KeyRound, Smartphone, Layout, Code, Bell, Navigation, Car, TrendingUp, MapPin, Zap, FlaskConical, Shield, X } from 'lucide-react-native';
 import { useAlert } from '../context/AlertContext';
 import notifee, { AndroidImportance } from '@notifee/react-native';
 import { getSimulateRelease, setSimulateRelease } from '../utils/devSettings';
 import UpdateRequiredModal from '../components/UpdateRequiredModal';
-import { Modal } from 'react-native';
-import { NotificationService } from '../services/NotificationService';
 
 const DevMenuItem = ({ icon: Icon, title, subtitle, onPress, color = "#fff" }) => (
     <TouchableOpacity style={styles.menuItem} onPress={onPress}>
@@ -27,11 +25,10 @@ const DevMenuItem = ({ icon: Icon, title, subtitle, onPress, color = "#fff" }) =
 
 export default function DeveloperScreen({ navigation }) {
     const insets = useSafeAreaInsets();
+    const demoSquareRef = useRef(null);
     const { showAlert } = useAlert();
     const [simulateRelease, setSimRelease] = useState(false);
     const [isUpdateModalVisible, setIsUpdateModalVisible] = useState(false);
-    const [surveyModalVisible, setSurveyModalVisible] = useState(false);
-    const [surveyData, setSurveyData] = useState(null);
 
     useEffect(() => {
         getSimulateRelease().then(val => setSimRelease(val));
@@ -48,18 +45,6 @@ export default function DeveloperScreen({ navigation }) {
         );
     };
 
-    const handleShowSurveyData = async () => {
-        const data = await authService.getSurveyData();
-        setSurveyData(data);
-        setSurveyModalVisible(true);
-    };
-
-    const handleResetSurveyData = async () => {
-        // Clear locally stored survey data
-        // We'll add a clearSurveyData to authService or just set it to null
-        await authService.setSurveyData(null);
-        showAlert("Success", "Survey data has been reset. App will now prompt for survey on next entry.");
-    };
 
     const handleTestNotification = async () => {
         try {
@@ -94,15 +79,6 @@ export default function DeveloperScreen({ navigation }) {
         }
     };
 
-    const handleSetupChannels = async () => {
-        const data = await authService.getSurveyData();
-        if (data) {
-            await NotificationService.setupPersonaChannels(data);
-            showAlert("Success", "Personalized notification channels have been configured based on your survey data.");
-        } else {
-            showAlert("Notice", "No survey data found. Please complete the onboarding survey first.");
-        }
-    };
 
     return (
         <View style={styles.container}>
@@ -179,23 +155,6 @@ export default function DeveloperScreen({ navigation }) {
                     />
                 </View>
 
-                <Text style={[styles.sectionTitle, { marginTop: 30 }]}>Survey Data</Text>
-                <View style={styles.card}>
-                    <DevMenuItem
-                        icon={Database}
-                        title="View Survey Data"
-                        subtitle="Show locally stored onboarding info"
-                        color="#39E29B"
-                        onPress={handleShowSurveyData}
-                    />
-                    <DevMenuItem
-                        icon={Trash2}
-                        title="Reset Survey Data"
-                        subtitle="Delete local survey and force prompt"
-                        color="#FF5252"
-                        onPress={handleResetSurveyData}
-                    />
-                </View>
 
                 <Text style={[styles.sectionTitle, { marginTop: 30 }]}>Testing Tools</Text>
                 <View style={styles.card}>
@@ -252,13 +211,31 @@ export default function DeveloperScreen({ navigation }) {
                         color="#FF9800"
                         onPress={handleTestNotification}
                     />
-                    <DevMenuItem
-                        icon={Shield}
-                        title="Setup Persona Channels"
-                        subtitle="Initialize channels from survey"
-                        color="#39E29B"
-                        onPress={handleSetupChannels}
-                    />
+
+                    {/* Shared Transition Demo Square */}
+                    <TouchableOpacity 
+                        style={styles.transitionDemoContainer}
+                        onPress={() => {
+                            if (demoSquareRef.current) {
+                                demoSquareRef.current.measureInWindow((x, y, width, height) => {
+                                    navigation.navigate('Test', { 
+                                        isSharedDemo: true,
+                                        sourceLayout: { x, y, width, height }
+                                    });
+                                });
+                            }
+                        }}
+                    >
+                        <Animated.View 
+                            ref={demoSquareRef}
+                            style={styles.demoSquare}
+                        />
+                        <View style={styles.textContainer}>
+                            <Text style={styles.menuItemTitle}>Shared Transition Demo</Text>
+                            <Text style={styles.menuItemSubtitle}>Tap the square to fly into Test Screen</Text>
+                        </View>
+                        <ChevronRight size={20} color="#444" />
+                    </TouchableOpacity>
                 </View>
 
                 <Text style={[styles.sectionTitle, { marginTop: 30 }]}>App Info</Text>
@@ -275,37 +252,6 @@ export default function DeveloperScreen({ navigation }) {
                 onUpdate={() => setIsUpdateModalVisible(false)}
             />
 
-            {/* Survey Data Modal */}
-            <Modal
-                visible={surveyModalVisible}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setSurveyModalVisible(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>User Survey Data</Text>
-                            <TouchableOpacity onPress={() => setSurveyModalVisible(false)}>
-                                <X size={24} color="#888" />
-                            </TouchableOpacity>
-                        </View>
-
-                        <ScrollView style={styles.jsonContainer}>
-                            <Text style={styles.jsonText}>
-                                {surveyData ? JSON.stringify(surveyData, null, 4) : 'No survey data found.'}
-                            </Text>
-                        </ScrollView>
-
-                        <TouchableOpacity 
-                            style={styles.closeBtn} 
-                            onPress={() => setSurveyModalVisible(false)}
-                        >
-                            <Text style={styles.closeBtnText}>Close</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
         </View>
     );
 }
@@ -482,5 +428,23 @@ const styles = StyleSheet.create({
         color: '#000',
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    transitionDemoContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 15,
+        paddingHorizontal: 15,
+    },
+    demoSquare: {
+        width: 40,
+        height: 40,
+        backgroundColor: '#39E29B',
+        borderRadius: 12,
+        marginRight: 15,
+        shadowColor: '#39E29B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 5,
     },
 });

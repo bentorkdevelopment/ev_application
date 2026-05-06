@@ -1,97 +1,175 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
+import Animated, { 
+    useSharedValue, 
+    useAnimatedStyle, 
+    withSpring, 
+    withTiming, 
+    FadeInDown,
+    Layout,
+    FadeIn,
+    useAnimatedScrollHandler,
+    interpolate,
+    Extrapolation,
+    FadeInLeft
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronRight, Car, Calendar, TrendingUp, Layout, Zap, MapPin } from 'lucide-react-native';
+import { useIsFocused } from '@react-navigation/native';
+import { ChevronRight, Car, Calendar, TrendingUp, Zap, MapPin, Layout as LayoutIcon } from 'lucide-react-native';
 import { authService } from '../services/auth';
 import { Colors } from '../styles/GlobalStyles';
 
-const MenuItem = ({ icon: Icon, title, onPress, subtitle, showChevron = true, color = Colors.white }) => (
-    <Pressable
-        style={({ pressed }) => [
-            styles.menuItem,
-            pressed && Platform.OS === 'ios' && { backgroundColor: 'rgba(255,255,255,0.05)' }
-        ]}
-        onPress={onPress}
-        android_ripple={{ color: 'rgba(255,255,255,0.1)' }}
-    >
-        <View style={[styles.iconContainer, { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
-            <Icon size={22} color={color} />
-        </View>
-        <View style={styles.menuTextContainer}>
-            <Text style={[styles.menuItemText, { color }]}>{title}</Text>
-            {subtitle && <Text style={styles.menuItemSubtitle}>{subtitle}</Text>}
-        </View>
-        {showChevron && <ChevronRight size={20} color="#555" />}
-    </Pressable>
-);
+const MenuItem = ({ icon: Icon, title, onPress, subtitle, showChevron = true, color = Colors.white, index = 0 }) => {
+    const scale = useSharedValue(1);
+    const opacity = useSharedValue(1);
 
-export default function LibraryScreen({ navigation }) {
-    const insets = useSafeAreaInsets();
-    const [user, setUser] = useState(null);
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: scale.value }],
+        opacity: opacity.value,
+    }));
 
-    useEffect(() => {
-        loadUser();
-    }, []);
+    const onPressIn = () => {
+        scale.value = withSpring(0.97, { damping: 60, stiffness: 600 });
+        opacity.value = withTiming(0.8, { duration: 100 });
+    };
 
-    const loadUser = async () => {
-        const userData = await authService.getUser();
-        console.log("LibraryScreen: Loaded user", userData);
-        setUser(userData);
+    const onPressOut = () => {
+        scale.value = withSpring(1, { damping: 60, stiffness: 600 });
+        opacity.value = withTiming(1, { duration: 100 });
     };
 
     return (
-        <ScrollView
+        <Animated.View 
+            entering={FadeInDown.delay(index * 50).springify().damping(60)}
+            style={animatedStyle}
+        >
+            <Pressable
+                style={styles.menuItem}
+                onPress={onPress}
+                onPressIn={onPressIn}
+                onPressOut={onPressOut}
+                android_ripple={{ color: 'rgba(255,255,255,0.1)' }}
+            >
+                <View style={[styles.iconContainer, { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
+                    <Icon size={22} color={color} />
+                </View>
+                <View style={styles.menuTextContainer}>
+                    <Text style={[styles.menuItemText, { color }]}>{title}</Text>
+                    {subtitle && <Text style={styles.menuItemSubtitle}>{subtitle}</Text>}
+                </View>
+                {showChevron && <ChevronRight size={20} color="#555" />}
+            </Pressable>
+        </Animated.View>
+    );
+};
+
+export default function LibraryScreen({ navigation }) {
+    const insets = useSafeAreaInsets();
+    const isFocused = useIsFocused();
+    const [user, setUser] = useState(null);
+    const [isLoaded, setIsLoaded] = useState(false);
+    const scrollY = useSharedValue(0);
+
+    useEffect(() => {
+        if (isFocused) {
+            loadUser();
+        }
+    }, [isFocused]);
+
+    const loadUser = async () => {
+        try {
+            const userData = await authService.getUser();
+            setUser(userData);
+        } finally {
+            setIsLoaded(true);
+        }
+    };
+
+    const scrollHandler = useAnimatedScrollHandler({
+        onScroll: (event) => {
+            scrollY.value = event.contentOffset.y;
+        },
+    });
+
+    const headerAnimatedStyle = useAnimatedStyle(() => {
+        const opacity = interpolate(scrollY.value, [0, 50], [1, 0], Extrapolation.CLAMP);
+        const translateY = interpolate(scrollY.value, [0, 50], [0, -10], Extrapolation.CLAMP);
+        return { opacity, transform: [{ translateY }] };
+    });
+
+    return (
+        <Animated.ScrollView
+            onScroll={scrollHandler}
+            scrollEventThrottle={16}
             style={styles.container}
             contentContainerStyle={[styles.contentContainer]}
             showsVerticalScrollIndicator={false}
         >
+            
 
 
 
-            {/* Menu Section 1 */}
-            <View style={styles.sectionContainer}>
-                {/* <Text style={styles.sectionTitle}>My Activity</Text> */}
+            <Animated.View 
+                entering={FadeIn.duration(400)}
+                style={styles.sectionContainer}
+            >
+                <Animated.Text 
+                    entering={FadeInDown.delay(300).springify()}
+                    style={styles.sectionTitle}
+                >
+                    My Activity
+                </Animated.Text>
                 <View style={styles.menuGroup}>
                     <MenuItem
                         icon={Zap}
                         title="Active Sessions"
                         onPress={() => navigation.navigate('ActiveSessions')}
+                        index={0}
                     />
                     <MenuItem
                         icon={Calendar}
                         title="My Bookings"
                         onPress={() => navigation.navigate('MyBookings')}
+                        index={1}
                     />
                     <MenuItem
                         icon={Car}
                         title="My Vehicles"
                         onPress={() => navigation.navigate('VehicleDetails')}
+                        index={2}
                     />
                     <MenuItem
                         icon={TrendingUp}
                         title="Charging Insights"
                         onPress={() => navigation.navigate('ChargingInsights')}
+                        index={3}
                     />
                     <MenuItem
                         icon={MapPin}
                         title="Trip Planner (Beta)"
                         onPress={() => navigation.navigate('TripPlanner')}
+                        index={4}
                     />
                 </View>
-            </View>
+            </Animated.View>
 
             {/* Developer Section */}
             {(user && (user.email?.toLowerCase().includes('om.lokhande34') || user.email?.toLowerCase().includes('jayeshmahajan340') || user.email?.toLowerCase().includes('sj020420'))) && (
-                <View style={styles.sectionContainer}>
+                <Animated.View 
+                    layout={Layout.springify()}
+                    entering={FadeInDown.springify().damping(60)}
+                    style={styles.sectionContainer}
+                >
                     <Text style={styles.sectionTitle}>Developer</Text>
                     <View style={styles.menuGroup}>
                         <MenuItem
-                            icon={Layout}
+                            icon={LayoutIcon}
                             title="Developer Options"
                             onPress={() => navigation.navigate('DeveloperOptions')}
+                            index={6}
                         />
                     </View>
-                </View>
+                </Animated.View>
             )}
 
 
@@ -99,7 +177,7 @@ export default function LibraryScreen({ navigation }) {
 
 
             <View style={{ height: 100 + insets.bottom }} />
-        </ScrollView>
+        </Animated.ScrollView>
     );
 }
 
@@ -138,16 +216,17 @@ const styles = StyleSheet.create({
         letterSpacing: 1,
     },
     menuGroup: {
-        backgroundColor: Colors.matteBlack,
-        borderRadius: 20,
+        backgroundColor: '#141414ff',
+        borderRadius: 1,
         overflow: 'hidden',
     },
     // Menu Item
     menuItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 16,
-        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 14,
+        paddingHorizontal: 4,
         borderBottomWidth: 1,
         borderBottomColor: '#2A2A2A',
     },

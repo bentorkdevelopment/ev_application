@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, Modal, TextInput, ActivityIndicator, Dimensions } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
 import StarRating from './StarRating';
 import { Colors } from '../styles/GlobalStyles';
 import { X } from 'lucide-react-native';
@@ -12,6 +13,33 @@ const AddReviewModal = ({ visible, onClose, stationId, existingReview, onReviewS
     const [comment, setComment] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState(null);
+    const progress = useSharedValue(0);
+
+    React.useEffect(() => {
+        if (visible) {
+            progress.value = withTiming(1, { duration: 200 });
+        } else {
+            progress.value = withTiming(0, { duration: 200 });
+        }
+    }, [visible]);
+
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: progress.value,
+    }));
+
+    const cardStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [100, 0], Extrapolation.CLAMP);
+        const scale = interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP);
+        const opacity = interpolate(progress.value, [0, 0.5, 1], [0, 0, 1], Extrapolation.CLAMP);
+
+        return {
+            opacity,
+            transform: [
+                { translateY: withSpring(translateY, { damping: 1150, stiffness: 1000 }) },
+                { scale: withSpring(scale, { damping: 1150, stiffness: 1000 }) }
+            ],
+        };
+    });
 
     useEffect(() => {
         if (visible) {
@@ -80,11 +108,11 @@ const AddReviewModal = ({ visible, onClose, stationId, existingReview, onReviewS
         <Modal
             visible={visible}
             transparent={true}
-            animationType="slide"
+            animationType="none"
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
-                <View style={styles.modalContainer}>
+            <Animated.View style={[styles.overlay, overlayStyle]}>
+                <Animated.View style={[styles.modalContainer, cardStyle]}>
                     {/* Header */}
                     <View style={styles.header}>
                         <Text style={styles.title}>{existingReview ? "Edit Review" : "Write a Review"}</Text>
@@ -134,8 +162,8 @@ const AddReviewModal = ({ visible, onClose, stationId, existingReview, onReviewS
                             )}
                         </TouchableOpacity>
                     </View>
-                </View>
-            </View>
+                </Animated.View>
+            </Animated.View>
         </Modal>
     );
 };
@@ -144,14 +172,18 @@ const styles = StyleSheet.create({
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.7)',
-        justifyContent: 'flex-end',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
     },
     modalContainer: {
         backgroundColor: '#1E1E1E',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
+        borderRadius: 24,
         padding: 24,
-        minHeight: 400,
+        width: '100%',
+        maxWidth: 400,
+        borderWidth: 1,
+        borderColor: '#333',
     },
     header: {
         flexDirection: 'row',

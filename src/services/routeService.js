@@ -3,6 +3,8 @@ import { GOOGLE_MAPS_API_KEY } from '@env';
 import { stationsApi } from './api';
 
 const GOOGLE_DIRECTIONS_URL = 'https://maps.googleapis.com/maps/api/directions/json';
+const GOOGLE_PLACES_API_KEY = GOOGLE_MAPS_API_KEY; // Usually shared
+const GOOGLE_PLACES_V1_URL = 'https://places.googleapis.com/v1/places:searchNearby';
 
 export const SUPPORTED_LOCATIONS = [
     "Koregaon Park, Pune",
@@ -118,18 +120,36 @@ const routeService = {
      */
     findStationsAlongRoute: async (routePoints, bufferKm = 5) => {
         try {
-            // 1. Fetch all stations (In a real app with backend, we would send the polyline to backend)
-            // For now, we fetch all and filter in frontend (OK for < 1000 stations)
+            // 1. Fetch from Local DB
             const allStationsData = await stationsApi.getAllStations();
-            const allStations = Array.isArray(allStationsData) ? allStationsData : (allStationsData?.stations || []);
+            const localStations = Array.isArray(allStationsData) ? allStationsData : (allStationsData?.stations || []);
 
-            if (allStations.length === 0) return [];
+            // 2. Fetch from Google Places (New API v1)
+            const googleStations = await routeService.findEVStationsFromGooglePlaces(routePoints, bufferKm * 1000);
 
-            // 2. Simplify Route: Take every nth point to reduce calculation
+            // 3. Merge & Deduplicate by Proximity (200m)
+            // Priority: Keep Local DB station if a Google result is nearby
+            const mergedStations = [...localStations];
+            
+            googleStations.forEach(gStation => {
+                const isDuplicate = localStations.some(lStation => {
+                    const dist = getDistanceFromLatLonInKm(
+                        lStation.latitude, lStation.longitude, 
+                        gStation.latitude, gStation.longitude
+                    );
+                    return dist < 0.2; // 200 meters
+                });
+
+                if (!isDuplicate) {
+                    mergedStations.push(gStation);
+                }
+            });
+
+            // 4. Simplify Route for distance calculations
             const simplifiedRoute = routePoints.filter((_, i) => i % 10 === 0);
 
-            // 3. Filter and Tag Stations with Route Position
-            const stationsOnRoute = allStations.filter(station => {
+            // 5. Filter and Tag Stations with Route Position
+            const stationsOnRoute = mergedStations.filter(station => {
                 if (!station.latitude || !station.longitude) return false;
                 const stationLat = Number(station.latitude);
                 const stationLng = Number(station.longitude);
@@ -156,18 +176,93 @@ const routeService = {
                     }
                 });
 
+                // Add Brand info if missing
+                let brandName = station.brand || 'EV Network';
+                if (station.name.toLowerCase().includes('tata')) brandName = 'Tata Power';
+                else if (station.name.toLowerCase().includes('jio')) brandName = 'Jio-bp Pulse';
+                else if (station.name.toLowerCase().includes('bpcl')) brandName = 'BPCL Charge';
+                else if (station.name.toLowerCase().includes('zeon')) brandName = 'Zeon Charging';
+
                 return {
                     ...station,
+                    brand: brandName,
                     routeIndex: closestIdx, // Position along full route
                     image_url: station.imageUrl || station.image_url || 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7'
                 };
             });
 
-            // 4. Sort stations by their appearance on the route
+            // 6. Sort stations by their appearance on the route
             return stationsOnRoute.sort((a, b) => a.routeIndex - b.routeIndex);
 
         } catch (error) {
             console.error("Find Stations Error:", error);
+            return [];
+        }
+    },
+
+    /**
+     * Fetch EV stations from Google Places API v1 along the route
+     */
+    findEVStationsFromGooglePlaces: async (routePoints, radiusMeters = 5000) => {
+        try {
+            if (!GOOGLE_PLACES_API_KEY) return [];
+
+            // Sample ~5 points across the route to cover the distance
+            const len = routePoints.length;
+            if (len < 10) return [];
+
+            const anchorIndices = [0, Math.floor(len * 0.25), Math.floor(len * 0.5), Math.floor(len * 0.75), len - 1];
+            const anchors = anchorIndices.map(idx => routePoints[idx]);
+
+            let allPlaces = [];
+            const seenPlaceIds = new Set();
+
+            for (const point of anchors) {
+                try {
+                    const response = await axios.post(GOOGLE_PLACES_V1_URL, {
+                        includedTypes: ['electric_vehicle_charging_station'],
+                        maxResultCount: 15,
+                        locationRestriction: {
+                            circle: {
+                                center: {
+                                    latitude: point.latitude,
+                                    longitude: point.longitude
+                                },
+                                radius: radiusMeters
+                            }
+                        }
+                    }, {
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+                            'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress'
+                        }
+                    });
+
+                    if (response.data?.places) {
+                        response.data.places.forEach(place => {
+                            if (!seenPlaceIds.has(place.id)) {
+                                seenPlaceIds.add(place.id);
+                                allPlaces.push({
+                                    placeId: place.id,
+                                    name: place.displayName?.text || 'Charging Station',
+                                    location: place.formattedAddress || 'Nearby Route',
+                                    latitude: place.location.latitude,
+                                    longitude: place.location.longitude,
+                                    status: 'Available', // Default for Google results
+                                    brand: 'EV Network'
+                                });
+                            }
+                        });
+                    }
+                } catch (pErr) {
+                    console.warn(`[Places] Anchor search failed:`, pErr.message);
+                }
+            }
+
+            return allPlaces;
+        } catch (error) {
+            console.error("[RouteService] Google Places Search Error:", error);
             return [];
         }
     },

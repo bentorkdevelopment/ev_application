@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, StatusBar, Dimensions, ActivityIndicator, Animated, Linking } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, StatusBar, Dimensions, ActivityIndicator, Animated, Linking, Alert, Platform, Switch, PanResponder, Vibration } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
-import { ChevronLeft, MapPin, BatteryCharging, Navigation, Zap, X, Navigation2 } from 'lucide-react-native';
+import { ChevronLeft, MapPin, BatteryCharging, Navigation, Zap, X, Navigation2, Check, Plus, ChevronUp, ChevronDown } from 'lucide-react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Colors, GlobalStyles } from '../styles/GlobalStyles';
 import GetLocation from 'react-native-get-location';
@@ -10,7 +10,12 @@ import routeService, { SUPPORTED_LOCATIONS, getDistanceFromLatLonInKm, getBearin
 import { useAlert } from '../context/AlertContext';
 import mapStyle from '../assets/map style/mapStyle.json';
 
+const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
+const EXPANDED_HEIGHT = SCREEN_HEIGHT * 0.55;
+const COLLAPSED_HEIGHT = 700;
+
 export default function TripPlannerScreen({ navigation }) {
+    const insets = useSafeAreaInsets();
     const { showAlert } = useAlert();
     const [source, setSource] = useState('Current Location');
     const [destination, setDestination] = useState('Mumbai');
@@ -22,6 +27,11 @@ export default function TripPlannerScreen({ navigation }) {
     // Trip State
     const [tripPlan, setTripPlan] = useState(null);
     const [viewMode, setViewMode] = useState('INPUT'); // INPUT | SUMMARY | DRIVE
+    const [selectedStations, setSelectedStations] = useState([]);
+    const [summaryTab, setSummaryTab] = useState(0); // 0 = all | 1 = selected
+    const summaryTabRef = useRef(0);
+    const summaryTabAnim = useRef(new Animated.Value(0)).current;
+    const [avoidTolls, setAvoidTolls] = useState(false);
 
     // Drive Mode State (kept for progress tracking)
     const [currentLocation, setCurrentLocation] = useState(null);
@@ -34,6 +44,45 @@ export default function TripPlannerScreen({ navigation }) {
     const scrollY = useRef(new Animated.Value(0)).current;
     const mapRef = useRef(null);
     const lastClosestIndex = useRef(0);
+
+    // Draggable Sheet State (Height-based)
+    const sheetHeight = useRef(new Animated.Value(EXPANDED_HEIGHT)).current;
+    const isExpanded = useRef(true);
+
+    const snapTo = (toValue) => {
+        Animated.spring(sheetHeight, {
+            toValue,
+            tension: 70,
+            friction: 12,
+            useNativeDriver: false,
+        }).start(({ finished }) => {
+            if (finished) Vibration.vibrate(18);
+        });
+    };
+
+    const toggleSheet = () => {
+        if (isExpanded.current) {
+            snapTo(COLLAPSED_HEIGHT);
+            isExpanded.current = false;
+        } else {
+            snapTo(EXPANDED_HEIGHT);
+            isExpanded.current = true;
+        }
+    };
+
+    const switchSummaryTab = useCallback((idx) => {
+        if (summaryTabRef.current === idx) return;
+
+        Animated.timing(summaryTabAnim, {
+            toValue: idx,
+            duration: 250,
+            easing: Animated.linear, // Or Easing.out(Easing.cubic)
+            useNativeDriver: false,
+        }).start();
+
+        summaryTabRef.current = idx;
+        setSummaryTab(idx);
+    }, [summaryTabAnim]);
     const amenities = ['Coffee', 'Food', 'Restroom', 'Shopping', 'Hotel'];
 
 
@@ -142,43 +191,104 @@ export default function TripPlannerScreen({ navigation }) {
         }
     };
 
+    const getMaxStops = useCallback(() => {
+        const distance = parseFloat(tripPlan?.stats?.distance || 0);
+        if (distance < 100) return 1;
+        if (distance < 300) return 2;
+        if (distance < 600) return 3;
+        return 5;
+    }, [tripPlan]);
+
+    const toggleStation = useCallback((station) => {
+        const isSelected = selectedStations.some(s => s.latitude === station.latitude && s.longitude === station.longitude);
+        
+        if (isSelected) {
+            setSelectedStations(prev => prev.filter(s => s.latitude !== station.latitude || s.longitude !== station.longitude));
+        } else {
+            // Limits based on distance
+            const maxStops = getMaxStops();
+            const distance = parseFloat(tripPlan?.stats?.distance || 0);
+
+            if (selectedStations.length >= maxStops) {
+                showAlert("Limit Reached", `Max ${maxStops} stops allowed for this route length (${distance} km).`);
+                return;
+            }
+
+            setSelectedStations(prev => [...prev, station]);
+        }
+    }, [selectedStations, tripPlan, showAlert]);
+
     const handleStartTrip = useCallback(() => {
         if (!tripPlan) return;
         
-        // 1. ALWAYS use exact coordinates to prevent Google Maps from failing to resolve addresses
+        // 1. Destination formatting
         const destCoords = tripPlan.destinationCoords;
         const destStr = destCoords 
             ? `${destCoords.lat},${destCoords.lng}` 
             : (tripPlan.destinationAddress || destination);
             
-        // 2. Limit waypoints to prevent silent routing failures in Google Maps (Max 20 intermediate stops allowed)
-        const waypointsList = (tripPlan.stations || [])
-            .slice(0, 20)
+        // 2. Waypoints formatting (lat,lng only)
+        const waypointsList = selectedStations
             .map(s => `${s.latitude},${s.longitude}`)
             .join('|');
             
-        // 3. Assemble the core parameters for the Universal Maps Link
+        // 3. Assemble URL
         let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destStr)}`;
         
+        // Origin
         if (source !== 'Current Location') {
-            // Omitting the origin parameter defaults to the user's current GPS location
-            url += `&origin=${encodeURIComponent(source)}`;
+            const startPoint = tripPlan.route.points[0];
+            const originStr = `${startPoint.latitude},${startPoint.longitude}`;
+            url += `&origin=${encodeURIComponent(originStr)}`;
         }
         
+        // Waypoints
         if (waypointsList) {
             url += `&waypoints=${encodeURIComponent(waypointsList)}`;
         }
         
+        // Avoid Tolls
+        if (avoidTolls) {
+            url += '&avoid=tolls';
+        }
+        
         url += '&travelmode=driving';
 
-        console.log('[Nav] Opening Maps URL:', url);
+        console.log('[Nav] Final URL:', url);
 
-        Linking.openURL(url).catch(err => {
-            console.error("Failed to open Maps:", err);
-            showAlert("Navigation Error", "Could not open Google Maps. Please ensure the app is installed.");
-        });
+        // Native Alert Confirmation
+        Alert.alert(
+            "Start Navigation",
+            `Opening in Google Maps with ${selectedStations.length} stops.`,
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Let's Go", 
+                    onPress: () => {
+                        Linking.openURL(url).catch(err => {
+                            console.error("Failed to open Maps URL:", err);
+                            
+                            // Fallback Intent for Android
+                            if (Platform.OS === 'android') {
+                                const destName = tripPlan.destinationAddress || destination;
+                                const fallbackUrl = destCoords 
+                                    ? `geo:${destCoords.lat},${destCoords.lng}?q=${destCoords.lat},${destCoords.lng}(${encodeURIComponent(destName)})`
+                                    : `geo:0,0?q=${encodeURIComponent(destName)}`;
+                                
+                                console.log('[Nav] Fallback to Geo Intent:', fallbackUrl);
+                                Linking.openURL(fallbackUrl).catch(fErr => {
+                                    showAlert("Navigation Error", "Could not open any navigation app.");
+                                });
+                            } else {
+                                showAlert("Navigation Error", "Could not open Google Maps.");
+                            }
+                        });
+                    }
+                }
+            ]
+        );
 
-    }, [tripPlan, source, destination, showAlert]);
+    }, [tripPlan, source, destination, showAlert, selectedStations, avoidTolls]);
 
 
     const handleStopTrip = useCallback(() => {
@@ -195,6 +305,13 @@ export default function TripPlannerScreen({ navigation }) {
         setCurrentLocation(null);
         setNextStopIndex(0);
         setNavStatus('idle');
+        setSelectedStations([]);
+        setSummaryTab(0);
+        summaryTabRef.current = 0;
+        summaryTabAnim.setValue(0);
+        setAvoidTolls(false);
+        sheetHeight.setValue(EXPANDED_HEIGHT);
+        isExpanded.current = true;
         lastClosestIndex.current = 0;
     }, []);
 
@@ -353,6 +470,20 @@ export default function TripPlannerScreen({ navigation }) {
                     ))}
                 </View>
 
+                {/* Options */}
+                <View style={[styles.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+                    <View>
+                        <Text style={[styles.sectionTitle, { marginBottom: 4 }]}>Avoid Tolls</Text>
+                        <Text style={{ color: '#888', fontSize: 12 }}>Prefer routes without toll gates</Text>
+                    </View>
+                    <Switch
+                        value={avoidTolls}
+                        onValueChange={setAvoidTolls}
+                        trackColor={{ false: '#333', true: Colors.primaryContainer + '80' }}
+                        thumbColor={avoidTolls ? Colors.primaryContainer : '#888'}
+                    />
+                </View>
+
                 {/* Action Button */}
                 <TouchableOpacity style={styles.planBtn} onPress={handlePlanRoute} disabled={isLoading}>
                     {isLoading ? <ActivityIndicator color="#000" /> : <Zap size={24} color="#000" fill="#000" />}
@@ -362,117 +493,205 @@ export default function TripPlannerScreen({ navigation }) {
         </View>
     );
 
-    const renderSummaryView = () => (
-        <View style={{ flex: 1 }}>
-            {/* Map Half */}
-            <View style={styles.mapContainer}>
-                <MapView
-                    provider={PROVIDER_GOOGLE}
-                    style={styles.map}
-                    showsBuildings={false}
-                    maxTilt={0}
-                    initialRegion={{
-                        latitude: tripPlan.route.points[0].latitude,
-                        longitude: tripPlan.route.points[0].longitude,
-                        latitudeDelta: 0.5,
-                        longitudeDelta: 0.5,
-                    }}
-                >
-                    <Polyline
-                        coordinates={tripPlan.route.points}
-                        strokeColor={Colors.primaryContainer} // Route Color
-                        strokeWidth={10}
-                    />
+    const renderSummaryView = () => {
+        const statsOpacity = sheetHeight.interpolate({
+            inputRange: [COLLAPSED_HEIGHT, COLLAPSED_HEIGHT + 80],
+            outputRange: [0, 1],
+            extrapolate: 'clamp'
+        });
 
-                    {/* Origin & Dest */}
-                    <Marker coordinate={tripPlan.route.points[0]} title="Start" pinColor={Colors.white} />
-                    <Marker coordinate={tripPlan.route.points[tripPlan.route.points.length - 1]} title="End" pinColor="red" />
+        const statsHeight = sheetHeight.interpolate({
+            inputRange: [COLLAPSED_HEIGHT, COLLAPSED_HEIGHT + 80],
+            outputRange: [0, 130],
+            extrapolate: 'clamp'
+        });
 
-                    {/* Stations */}
-                    {tripPlan.stations.map((s, i) => (
-                        <Marker
-                            key={`stp-${i}`}
-                            coordinate={{ latitude: Number(s.latitude), longitude: Number(s.longitude) }}
-                            title={s.name}
-                            description={`Stop #${i + 1}`}
-                            tracksViewChanges={false}
-                        >
-                            <View style={styles.markerBadge}>
-                                <Zap size={10} color="#000" fill="#000" />
+        const statsTranslateY = sheetHeight.interpolate({
+            inputRange: [COLLAPSED_HEIGHT, COLLAPSED_HEIGHT + 80],
+            outputRange: [-15, 0],
+            extrapolate: 'clamp'
+        });
+
+        const miniStatsOpacity = sheetHeight.interpolate({
+            inputRange: [COLLAPSED_HEIGHT, COLLAPSED_HEIGHT + 40],
+            outputRange: [1, 0],
+            extrapolate: 'clamp'
+        });
+
+        const mapSectionHeight = Animated.subtract(SCREEN_HEIGHT, sheetHeight);
+
+        const TAB_BAR_WIDTH = SCREEN_WIDTH - 48;
+        const TAB_WIDTH = (TAB_BAR_WIDTH - 12) / 2;
+
+        const indicatorX = summaryTabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, TAB_WIDTH + 12]
+        });
+
+        return (
+            <View style={{ flex: 1, flexDirection: 'column', backgroundColor: '#121212' }}>
+                {/* Map Section */}
+                <Animated.View style={{ height: mapSectionHeight }}>
+                    <MapView
+                        ref={mapRef}
+                        style={StyleSheet.absoluteFill}
+                        provider={PROVIDER_GOOGLE}
+                        customMapStyle={mapStyle}
+                        initialRegion={{
+                            latitude: 19.0760,
+                            longitude: 72.8777,
+                            latitudeDelta: 0.2,
+                            longitudeDelta: 0.2,
+                        }}
+                    >
+                        <Polyline
+                            coordinates={tripPlan.route.points}
+                            strokeColor={Colors.primaryContainer}
+                            strokeWidth={4}
+                        />
+
+                        {/* Origin & Dest */}
+                        <Marker coordinate={tripPlan.route.points[0]} title="Start" pinColor={Colors.white} />
+                        <Marker coordinate={tripPlan.route.points[tripPlan.route.points.length - 1]} title="End" pinColor="red" />
+
+                        {/* Stations */}
+                        {tripPlan.stations.map((station, i) => (
+                            <Marker
+                                key={i}
+                                coordinate={{ latitude: station.latitude, longitude: station.longitude }}
+                                title={station.name}
+                                onPress={() => toggleStation(station)}
+                            >
+                                <View style={[
+                                    styles.markerContainer,
+                                    selectedStations.some(s => s.latitude === station.latitude) && styles.markerActive
+                                ]}>
+                                    <Zap size={14} color={selectedStations.some(s => s.latitude === station.latitude) ? "#000" : Colors.primaryContainer} fill={selectedStations.some(s => s.latitude === station.latitude) ? "#000" : Colors.primaryContainer} />
+                                </View>
+                            </Marker>
+                        ))}
+                    </MapView>
+
+                    <TouchableOpacity style={styles.closeMapBtn} onPress={handleReset}>
+                        <X size={24} color="#000" />
+                    </TouchableOpacity>
+
+                    <View style={styles.mapLegend}>
+                        <View style={styles.legendDot} />
+                        <Text style={styles.legendText}>Tap marker to select stop  |  {selectedStations.length}/{getMaxStops()} stops selected</Text>
+                    </View>
+                </Animated.View>
+
+                {/* Summary Sheet */}
+                <Animated.View style={[
+                    styles.summarySheet, 
+                    { 
+                        height: sheetHeight,
+                        overflow: 'hidden' 
+                    }
+                ]}>
+                    <View style={styles.sheetInner}>
+                        {/* Mini Stats Row - visible only when collapsed */}
+                        <Animated.View style={[styles.miniStatsRow, { opacity: miniStatsOpacity }]}>
+                            <MapPin size={12} color="#888" style={{ marginRight: 6 }} />
+                            <Text style={styles.miniStatsText}>
+                                {tripPlan.stats.distance} km  ·  {Math.floor(tripPlan.stats.duration / 60)}h {tripPlan.stats.duration % 60}m  ·  {selectedStations.length} Stops
+                            </Text>
+                        </Animated.View>
+
+                    <Animated.View style={[
+                        styles.summaryHeader, 
+                        { 
+                            opacity: statsOpacity, 
+                            height: statsHeight,
+                            transform: [{ translateY: statsTranslateY }],
+                            overflow: 'hidden'
+                        }
+                    ]}>
+                        <Text style={styles.summaryTitle}>Trip Summary</Text>
+                        <View style={styles.statsRow}>
+                            <View style={styles.statItem}>
+                                <Text style={styles.statLabel}>Distance</Text>
+                                <Text style={styles.statValue}>{tripPlan.stats.distance} km</Text>
                             </View>
-                        </Marker>
-                    ))}
-
-                </MapView>
-
-                <TouchableOpacity style={styles.closeMapBtn} onPress={handleReset}>
-                    <X size={24} color="#000" />
-                </TouchableOpacity>
-            </View>
-
-            {/* Summary Sheet */}
-            <View style={styles.summarySheet}>
-                <View style={styles.summaryHeader}>
-                    <Text style={styles.summaryTitle}>Trip Summary</Text>
-                    <View style={styles.statsRow}>
-                        <View style={styles.statItem}>
-                            <Text style={styles.statLabel}>Distance</Text>
-                            <Text style={styles.statValue}>{tripPlan.stats.distance} km</Text>
+                            <View style={styles.statItem}>
+                                <Text style={styles.statLabel}>Est. Time</Text>
+                                <Text style={styles.statValue}>{Math.floor(tripPlan.stats.duration / 60)}h {tripPlan.stats.duration % 60}m</Text>
+                            </View>
+                            <View style={styles.statItem}>
+                                <Text style={styles.statLabel}>Stops</Text>
+                                <Text style={styles.statValue}>{tripPlan.stats.stops}</Text>
+                            </View>
                         </View>
-                        <View style={styles.statItem}>
-                            <Text style={styles.statLabel}>Est. Time</Text>
-                            <Text style={styles.statValue}>{Math.floor(tripPlan.stats.duration / 60)}h {tripPlan.stats.duration % 60}m</Text>
+                    </Animated.View>
+
+                    <View style={styles.tabContainer}>
+                        <Animated.View style={[styles.tabIndicator, { 
+                            width: TAB_WIDTH,
+                            transform: [{ translateX: indicatorX }] 
+                        }]} />
+                        <TouchableOpacity 
+                            style={[styles.tab]} 
+                            onPress={() => switchSummaryTab(0)}
+                        >
+                            <Text style={[styles.tabText, summaryTab === 0 && styles.tabTextActive]}>All Stations</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                            style={[styles.tab]} 
+                            onPress={() => switchSummaryTab(1)}
+                        >
+                            <Text style={[styles.tabText, summaryTab === 1 && styles.tabTextActive]}>My Stops ({selectedStations.length})</Text>
+                        </TouchableOpacity>
                         </View>
-                        <View style={styles.statItem}>
-                            <Text style={styles.statLabel}>Stops</Text>
-                            <Text style={styles.statValue}>{tripPlan.stats.stops}</Text>
+
+                        <SummaryTabContent 
+                            stations={summaryTab === 0 ? tripPlan.stations : selectedStations}
+                            selectedStations={selectedStations}
+                            toggleStation={toggleStation}
+                            emptyMessage={summaryTab === 0 
+                                ? "No charging stations found on this route." 
+                                : "Tap markers or stations to select your stops."}
+                        />
+
+                        {/* Control Buttons + Start Trip Button Group */}
+                        <View style={styles.footerRow}>
+                            <View style={styles.controlsGroup}>
+                                <TouchableOpacity 
+                                    style={styles.controlBtn} 
+                                    onPress={() => snapTo(EXPANDED_HEIGHT)}
+                                >
+                                    <ChevronUp size={18} color="#888" />
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    style={styles.controlBtn} 
+                                    onPress={() => snapTo(COLLAPSED_HEIGHT)}
+                                >
+                                    <ChevronDown size={18} color="#888" />
+                                </TouchableOpacity>
+                            </View>
+
+                            <TouchableOpacity
+                                style={[styles.startTripBtn, navStatus === 'initializing' && { opacity: 0.7 }]}
+                                onPress={handleStartTrip}
+                                disabled={navStatus === 'initializing'}
+                            >
+                                {navStatus === 'initializing' ? (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                        <ActivityIndicator size="small" color="#000" />
+                                        <Text style={styles.startTripText}>Starting Navigation...</Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.startTripText}>
+                                        Start Trip {selectedStations.length > 0 ? `· ${selectedStations.length} Stop${selectedStations.length > 1 ? 's' : ''}` : '(Direct)'}
+                                    </Text>
+                                )}
+                            </TouchableOpacity>
                         </View>
                     </View>
-                </View>
-
-                <ScrollView style={styles.timeline}>
-                    {tripPlan.stations.map((station, i) => (
-                        <View key={i} style={styles.timelineItem}>
-                            <View style={styles.timelineLeft}>
-                                <View style={styles.timelineLine} />
-                                <View style={styles.timelineDot}>
-                                    <Text style={styles.stopNum}>{i + 1}</Text>
-                                </View>
-                            </View>
-                            <View style={styles.timelineContent}>
-                                <Text style={styles.timelineTitle}>{station.name}</Text>
-                                <Text style={styles.timelineSub}>{station.location}</Text>
-                                {station.status === 'Available' ?
-                                    <Text style={{ color: Colors.success, fontSize: 12 }}>Available • Fast Charging</Text> :
-                                    <Text style={{ color: 'orange', fontSize: 12 }}>{station.status}</Text>
-                                }
-                            </View>
-                        </View>
-                    ))}
-                    {tripPlan.stations.length === 0 && (
-                        <Text style={{ color: '#666', textAlign: 'center', marginTop: 20 }}>
-                            No charging needed for this route (or no stations found).
-                        </Text>
-                    )}
-                </ScrollView>
-
-                <TouchableOpacity
-                    style={[styles.startTripBtn, navStatus === 'initializing' && { opacity: 0.7 }]}
-                    onPress={handleStartTrip}
-                    disabled={navStatus === 'initializing'}
-                >
-                    {navStatus === 'initializing' ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                            <ActivityIndicator size="small" color="#000" />
-                            <Text style={styles.startTripText}>Starting Navigation...</Text>
-                        </View>
-                    ) : (
-                        <Text style={styles.startTripText}>▶  Start Trip</Text>
-                    )}
-                </TouchableOpacity>
+                </Animated.View>
             </View>
-        </View>
-    );
+        );
+    };
 
     return (
         <View style={styles.container}>
@@ -481,6 +700,23 @@ export default function TripPlannerScreen({ navigation }) {
         </View>
     );
 }
+
+const getBrandColor = (name) => {
+    const n = name.toLowerCase();
+    if (n.includes('tata')) return '#00539C';
+    if (n.includes('jio')) return '#005EB8';
+    if (n.includes('bp')) return '#00B140';
+    if (n.includes('zeon')) return '#FFD700';
+    return '#444';
+};
+
+const getBrandName = (name) => {
+    const n = name.toLowerCase();
+    if (n.includes('tata')) return 'Tata Power';
+    if (n.includes('jio')) return 'Jio-bp Pulse';
+    if (n.includes('zeon')) return 'Zeon Charging';
+    return 'EV Network';
+};
 
 const getBatteryColor = (level) => {
     if (level > 50) return Colors.primaryContainer;
@@ -681,7 +917,6 @@ const styles = StyleSheet.create({
     },
     // ... (Keep existing summary/drive styles below or let them be)
     mapContainer: {
-        height: '45%',
         width: '100%',
         position: 'relative'
     },
@@ -734,44 +969,113 @@ const styles = StyleSheet.create({
         padding: 5,
         borderRadius: 15,
         borderWidth: 2,
-        borderColor: '#fff'
+        borderColor: '#fff',
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    markerBadgeSelected: {
+        backgroundColor: '#fff',
+        borderColor: '#000',
+        width: 32,
+        height: 32,
+        borderRadius: 16,
     },
     summarySheet: {
-        flex: 1,
-        backgroundColor: '#121212',
+        backgroundColor: '#1212120d',
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
-        marginTop: -25,
-        padding: 24
+        marginTop: -8,
+        elevation: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 10,
+    },
+    sheetInner: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    dragHandleContainer: {
+        width: '100%',
+        height: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'transparent',
+    },
+    dragHandle: {
+        width: 40,
+        height: 5,
+        borderRadius: 3,
+        backgroundColor: '#444'
+    },
+    miniStatsRow: {
+        height: 44,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        backgroundColor: '#1C1C1E',
+        marginTop: 10,
+    },
+    miniStatsText: {
+        color: '#888',
+        fontSize: 12,
+        fontWeight: '600'
+    },
+    footerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        padding: 16,
+        paddingBottom: 8, // Approximate padding for insets
+        backgroundColor: '#1C1C1E',
+    },
+    controlsGroup: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    controlBtn: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: '#313131ff',
+        borderWidth: 1,
+        borderColor: '#2C2C2E',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     summaryHeader: {
-        marginBottom: 20
+        paddingHorizontal: 24,
     },
     summaryTitle: {
         color: '#fff',
-        fontSize: 24,
+        fontSize: 22,
         fontWeight: 'bold',
-        marginBottom: 15
+        marginTop: 16,
+        marginBottom: 16
     },
     statsRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        backgroundColor: '#1C1C1E',
+        backgroundColor: '#2C2C2E',
+        padding: 16,
         borderRadius: 16,
-        padding: 20
+        marginBottom: 18
     },
     statItem: {
         alignItems: 'center'
     },
     statLabel: {
         color: '#666',
-        fontSize: 12,
+        fontSize: 10,
         marginBottom: 4,
         textTransform: 'uppercase'
     },
     statValue: {
         color: '#fff',
-        fontSize: 18,
+        fontSize: 14,
         fontWeight: 'bold'
     },
     timeline: {
@@ -799,7 +1103,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         backgroundColor: '#1C1C1E',
         borderWidth: 2,
-        borderColor: Colors.primaryContainer,
+        borderColor: Colors.white,
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 1
@@ -827,15 +1131,16 @@ const styles = StyleSheet.create({
         marginBottom: 5
     },
     startTripBtn: {
-        backgroundColor: Colors.primaryContainer,
-        borderRadius: 20,
-        paddingVertical: 18,
+        flex: 1,
+        height: 54,
+        backgroundColor: Colors.white,
+        borderRadius: 28,
+        justifyContent: 'center',
         alignItems: 'center',
-        marginTop: 10
     },
     startTripText: {
         color: '#000',
-        fontSize: 18,
+        fontSize: 14,
         fontWeight: 'bold'
     },
     // Drive Mode Styles
@@ -1048,4 +1353,219 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         letterSpacing: 0.3,
     },
+    tabContainer: {
+        flexDirection: 'row',
+        marginBottom: 15,
+        marginTop: 18,
+        gap: 12,
+        position: 'relative',
+        backgroundColor: '#1C1C1E',
+        borderRadius: 20,
+        marginHorizontal: 16,
+        padding: 4,
+    },
+    tabIndicator: {
+        position: 'absolute',
+        top: 4,
+        bottom: 4,
+        borderRadius: 28,
+        marginHorizontal: 1,
+        backgroundColor: Colors.white,
+    },
+    tab: {
+        flex: 1,
+        paddingVertical: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1,
+    },
+    tabText: {
+        color: '#888',
+        fontSize: 14,
+        fontWeight: '600'
+    },
+    tabTextActive: {
+        color: '#000',
+    },
+    selectedBadge: {
+        backgroundColor: Colors.primaryContainer,
+        borderRadius: 10,
+        padding: 4,
+        marginLeft: 8
+    },
+    emptyState: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingTop: 40,
+        gap: 15
+    },
+    emptyStateText: {
+        color: '#666',
+        fontSize: 14,
+        textAlign: 'center',
+        maxWidth: '80%'
+    },
+    mapLegend: {
+        position: 'absolute',
+        bottom: 5,
+        right: 0,
+        backgroundColor: 'rgba(30, 30, 30, 0.85)',
+        paddingVertical: 8,
+        paddingHorizontal: 15,
+        borderRadius: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8
+    },
+    legendDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: Colors.primaryContainer
+    },
+    legendText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '600'
+    },
+    brandLogo: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    brandInitial: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 18
+    },
+    brandName: {
+        color: '#888',
+        fontSize: 12,
+        marginBottom: 2
+    },
+    selectBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(0, 230, 118, 0.1)',
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    selectBtnActive: {
+        backgroundColor: Colors.primaryContainer
+    },
+    selectedStopsBar: {
+        height: 60,
+        paddingHorizontal: 5,
+        marginBottom: 10,
+        justifyContent: 'center'
+    },
+    stopChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#1C1C1E',
+        borderWidth: 1,
+        borderColor: Colors.primaryContainer,
+        borderRadius: 20,
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        gap: 8,
+        maxWidth: 150
+    },
+    stopChipText: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: '600'
+    },
+    barPlaceholder: {
+        color: '#666',
+        fontSize: 13,
+        fontStyle: 'italic',
+        paddingLeft: 10
+    },
+    fadeOverlay: {
+        width: '100%',
+        height: 40,
+        backgroundColor: '#121212',
+        opacity: 0.8,
+    }
 });
+
+function SummaryTabContent({ stations, selectedStations, toggleStation, emptyMessage }) {
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        fadeAnim.setValue(0);
+        Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 180,
+            useNativeDriver: false,
+        }).start();
+    }, [stations]);
+
+    return (
+        <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+            <ScrollView style={styles.timeline}>
+                {stations.map((station, i) => (
+                    <TouchableOpacity 
+                        key={i} 
+                        style={styles.timelineItem}
+                        onPress={() => toggleStation(station)}
+                    >
+                        <View style={styles.timelineLeft}>
+                            <View style={styles.timelineLine} />
+                            <View style={[
+                                styles.timelineDot,
+                                selectedStations.some(s => s.latitude === station.latitude && s.longitude === station.longitude) && { backgroundColor: Colors.primaryContainer }
+                            ]}>
+                                <Text style={styles.stopNum}>{i + 1}</Text>
+                            </View>
+                        </View>
+                        <View style={[
+                            styles.timelineContent,
+                            selectedStations.some(s => s.latitude === station.latitude && s.longitude === station.longitude) && { borderLeftWidth: 3, borderLeftColor: Colors.primaryContainer }
+                        ]}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={[styles.brandLogo, { backgroundColor: getBrandColor(station.name) }]}>
+                                    <Text style={styles.brandInitial}>{station.name.charAt(0)}</Text>
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 12 }}>
+                                    <Text style={styles.timelineTitle}>{station.name}</Text>
+                                    <Text style={styles.brandName}>{getBrandName(station.name)}</Text>
+                                    <Text style={styles.timelineSub}>{station.location}</Text>
+                                </View>
+                                <TouchableOpacity 
+                                    style={[
+                                        styles.selectBtn,
+                                        selectedStations.some(s => s.latitude === station.latitude && s.longitude === station.longitude) && styles.selectBtnActive
+                                    ]}
+                                    onPress={() => toggleStation(station)}
+                                >
+                                    {selectedStations.some(s => s.latitude === station.latitude && s.longitude === station.longitude) ? 
+                                        <Check size={16} color="#000" strokeWidth={3} /> : 
+                                        <Plus size={16} color={Colors.primaryContainer} strokeWidth={3} />
+                                    }
+                                </TouchableOpacity>
+                            </View>
+                            <View style={{ marginTop: 8 }}>
+                                {station.status === 'Available' ?
+                                    <Text style={{ color: Colors.white, fontSize: 12 }}>Available • Fast Charging</Text> :
+                                    <Text style={{ color: 'orange', fontSize: 12 }}>{station.status}</Text>
+                                }
+                            </View>
+                        </View>
+                    </TouchableOpacity>
+                ))}
+                {stations.length === 0 && (
+                    <View style={styles.emptyState}>
+                        <MapPin size={40} color="#333" />
+                        <Text style={styles.emptyStateText}>{emptyMessage}</Text>
+                    </View>
+                )}
+            </ScrollView>
+        </Animated.View>
+    );
+}

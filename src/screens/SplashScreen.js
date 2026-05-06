@@ -281,11 +281,8 @@ export default function SplashScreen({ navigation, route } = {}) {
                         }
                     } else if (token && isValid) {
 
-                        // Ensure notification channels are set up for the user's persona
-                        const surveyData = await authService.getSurveyData();
-                        if (surveyData) {
-                            NotificationService.setupPersonaChannels(surveyData);
-                        }
+                        // Setup standard notification channels (Navigation, General, Session)
+                        await NotificationService.setupPersonaChannels();
 
                         const tcAccepted = await authService.hasAcceptedTerms();
                         if (!tcAccepted) {
