@@ -1,21 +1,48 @@
 import React from 'react';
 import { View, Text, Modal, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
 import { Colors, Fonts } from '../styles/GlobalStyles';
 
 const { width } = Dimensions.get('window');
 
 const CustomAlert = ({ visible, title, message, buttons = [], onClose }) => {
-    if (!visible) return null;
+    const progress = useSharedValue(0);
+
+    React.useEffect(() => {
+        if (visible) {
+            progress.value = withTiming(1, { duration: 200 });
+        } else {
+            progress.value = withTiming(0, { duration: 200 });
+        }
+    }, [visible]);
+
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: progress.value,
+    }));
+
+    const cardStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [100, 0], Extrapolation.CLAMP);
+        const scale = interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP);
+        const opacity = interpolate(progress.value, [0, 0.5, 1], [0, 0, 1], Extrapolation.CLAMP);
+
+        return {
+            opacity,
+            transform: [
+                { translateY: withSpring(translateY, { damping: 1150, stiffness: 1000 }) },
+                { scale: withSpring(scale, { damping: 1150, stiffness: 1000 }) }
+            ],
+        };
+    });
 
     return (
         <Modal
             visible={visible}
             transparent={true}
-            animationType="fade"
+            animationType="none"
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
-                <View style={styles.alertContainer}>
+            <Animated.View style={[styles.overlay, overlayStyle]}>
+                <Animated.View style={[styles.alertContainer, cardStyle]}>
                     {title && <Text style={styles.title}>{title}</Text>}
                     {message && <Text style={styles.message}>{message}</Text>}
 
@@ -50,9 +77,9 @@ const CustomAlert = ({ visible, title, message, buttons = [], onClose }) => {
                             </TouchableOpacity>
                         )}
                     </View>
-                </View>
-            </View>
-        </Modal>
+                    </Animated.View>
+                </Animated.View>
+            </Modal>
     );
 };
 

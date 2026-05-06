@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, FlatList, StatusBar, Animated, Modal, Image, Keyboard } from 'react-native';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, StatusBar, Animated, Modal, Image, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ChevronRight, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter, Star } from 'lucide-react-native';
 import BoltOutlineIcon from '../assets/icons/Outlined/bolt_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg';
@@ -19,37 +19,29 @@ const CATEGORIES = [
 ];
 
 const RECENT_SEARCHES_KEY = '@recent_searches';
+const ITEM_HEIGHT = 107; // 16*2 padding + 1 border + 60 image + 14 margin
 
-const StationItem = ({ station, index, onPress, connectorCount }) => {
+// --- Optimized Station Item ---
+const StationItem = React.memo(({ station, onPress }) => {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(0.95)).current;
 
     useEffect(() => {
-        const delay = index < 10 ? index * 80 : 0;
+        // Subtle staggered entry for the first few items
         Animated.parallel([
             Animated.timing(fadeAnim, {
                 toValue: 1,
                 duration: 300,
-                delay: delay,
                 useNativeDriver: true,
             }),
             Animated.spring(scaleAnim, {
                 toValue: 1,
-                friction: 6,
+                friction: 8,
                 tension: 40,
-                delay: delay,
                 useNativeDriver: true,
             }),
         ]).start();
     }, []);
-
-    // Helper for status color
-    const getStatusColor = (status) => {
-        const s = (status || '').toUpperCase();
-        if (s === 'ACTIVE' || s === 'AVAILABLE' || s === 'ONLINE') return Colors.statusGreen;
-        if (s === 'BUSY' || s === 'OCCUPIED' || s === 'CHARGING') return Colors.statusOrange;
-        return Colors.statusRed;
-    };
 
     return (
         <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
@@ -80,9 +72,11 @@ const StationItem = ({ station, index, onPress, connectorCount }) => {
                     </View>
 
                     <View style={styles.statusRow}>
-                        {connectorCount > 0 ? (
-                            <Text style={styles.connectorInfo}>{connectorCount} Connectors</Text>
-                        ) : null}
+                        {station.connectorCount > 0 ? (
+                            <Text style={styles.connectorInfo}>{station.connectorCount} Connectors</Text>
+                        ) : (
+                            <Text style={styles.connectorInfo}>No Connectors</Text>
+                        )}
                     </View>
                 </View>
 
@@ -97,7 +91,7 @@ const StationItem = ({ station, index, onPress, connectorCount }) => {
             </TouchableOpacity>
         </Animated.View>
     );
-};
+});
 
 export default function SearchScreen({ navigation }) {
     const insets = useSafeAreaInsets();
@@ -157,7 +151,6 @@ export default function SearchScreen({ navigation }) {
         try {
             setLoading(true);
             
-            // Check maintenance mode first before loading (controlled by Developer Settings toggle)
             const respectMaintenance = await shouldRespectMaintenance();
             if (respectMaintenance) {
                 try {
@@ -176,8 +169,10 @@ export default function SearchScreen({ navigation }) {
                 stationsApi.getAllStations(),
                 chargersApi.getAllChargers().catch(e => [])
             ]);
+            
+            const chargers = Array.isArray(chargersData) ? chargersData : (chargersData?.chargers || []);
+            setAllChargers(chargers);
             setStations(stationsData);
-            setAllChargers(Array.isArray(chargersData) ? chargersData : (chargersData?.chargers || []));
         } catch (error) {
             console.error('Failed to load stations:', error);
         } finally {
@@ -185,33 +180,37 @@ export default function SearchScreen({ navigation }) {
         }
     };
 
-    const filteredStations = useMemo(() => {
-        let result = stations;
+    // --- Optimized Data Transformation ---
+    const listData = useMemo(() => {
         const query = searchText.toLowerCase();
-
-        if (query) {
-            result = result.filter(station =>
-                (station.name?.toLowerCase() || '').includes(query) ||
-                (station.locationName?.toLowerCase() || '').includes(query)
-            );
-        }
-
-        if (activeCategory) {
-            // Mock category filtering logic if needed
-        }
-
-        return result;
-    }, [stations, searchText, activeCategory]);
+        
+        return stations
+            .filter(station => {
+                const matchesSearch = !query || 
+                    (station.name?.toLowerCase() || '').includes(query) ||
+                    (station.locationName?.toLowerCase() || '').includes(query);
+                
+                return matchesSearch;
+            })
+            .map(station => {
+                // Pre-calculate connector count to avoid O(N*M) in renderItem
+                const connectorCount = allChargers.filter(c => 
+                    (c.stationId || c.station_id || c.station) == station.id
+                ).length;
+                
+                return { ...station, connectorCount };
+            });
+    }, [stations, allChargers, searchText]);
 
     const handleSearchSubmit = () => {
         addRecentSearch(searchText);
     };
 
-    const handleStationPress = (station) => {
+    const handleStationPress = useCallback((station) => {
         Keyboard.dismiss();
         setSelectedStation(station);
         setIsSheetVisible(true);
-    };
+    }, []);
 
     const handleSelectCharger = (charger) => {
         setIsSheetVisible(false);
@@ -245,7 +244,6 @@ export default function SearchScreen({ navigation }) {
                     <Text style={styles.headerTitle}>Find Stations</Text>
                 </View>
 
-                {/* Search Bar */}
                 <View style={styles.searchRow}>
                     <View style={styles.searchContainer}>
                         <Search size={20} color="#888" style={{ marginRight: 10 }} />
@@ -278,7 +276,6 @@ export default function SearchScreen({ navigation }) {
                 </View>
             </View>
 
-            {/* Recent Searches */}
             {searchText.length === 0 && recentSearches.length > 0 && (
                 <View style={styles.sectionContainer}>
                     <View style={styles.sectionHeader}>
@@ -316,23 +313,26 @@ export default function SearchScreen({ navigation }) {
         </View>
     );
 
+    const renderItem = useCallback(({ item }) => (
+        <StationItem 
+            station={item} 
+            onPress={handleStationPress} 
+        />
+    ), [handleStationPress]);
+
+    const getItemLayout = useCallback((data, index) => ({
+        length: ITEM_HEIGHT,
+        offset: ITEM_HEIGHT * index,
+        index,
+    }), []);
+
     return (
         <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={Colors.matteBlack} />
 
             <FlatList
-                data={filteredStations}
-                renderItem={({ item, index }) => {
-                    const stationChargers = allChargers.filter(c => (c.stationId || c.station_id || c.station) == item.id);
-                    return (
-                        <StationItem 
-                            station={item} 
-                            index={index} 
-                            onPress={handleStationPress} 
-                            connectorCount={stationChargers.length}
-                        />
-                    );
-                }}
+                data={listData}
+                renderItem={renderItem}
                 keyExtractor={(item) => item.id.toString()}
                 ListHeaderComponent={renderHeader}
                 ListEmptyComponent={
@@ -348,9 +348,16 @@ export default function SearchScreen({ navigation }) {
                 keyboardShouldPersistTaps="always"
                 keyboardDismissMode="on-drag"
                 ListFooterComponent={<View style={{ height: 40 }} />}
+                
+                // Performance Optimizations
+                getItemLayout={getItemLayout}
+                initialNumToRender={8}
+                maxToRenderPerBatch={10}
+                windowSize={10}
+                removeClippedSubviews={true}
+                updateCellsBatchingPeriod={50}
             />
 
-            {/* Filter Modal */}
             <Modal
                 transparent={true}
                 visible={isFilterVisible}
@@ -441,12 +448,11 @@ const styles = StyleSheet.create({
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: Colors.cardBg, // #1E1E1E
-        borderRadius: 24, // Pill shape
+        backgroundColor: Colors.cardBg,
+        borderRadius: 24,
         paddingHorizontal: 16,
-        paddingVertical: 12, // Increased height for easier tap
+        paddingVertical: 12,
         marginRight: 12,
-        // Shadow
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.2,
@@ -457,7 +463,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: Colors.white,
         fontSize: 16,
-        paddingVertical: 0, // Reset default Android padding
+        paddingVertical: 0,
     },
     clearBtn: {
         padding: 4,
@@ -472,7 +478,6 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.cardBg,
         justifyContent: 'center',
         alignItems: 'center',
-        // Shadow
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.2,
@@ -486,7 +491,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingBottom: 20,
     },
-    // Recent Searches
     sectionContainer: {
         marginTop: 24,
         marginBottom: 20,
@@ -528,7 +532,6 @@ const styles = StyleSheet.create({
         fontSize: 16,
         marginLeft: 14,
     },
-    // Station Cards
     stationCard: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -581,17 +584,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
     },
-    statusDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        marginRight: 6,
-    },
-    statusText: {
-        fontSize: 12,
-        fontWeight: '600',
-        marginRight: 6,
-    },
     connectorInfo: {
         color: '#666',
         fontSize: 12,
@@ -616,7 +608,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
     },
-    // Modal Styles
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.8)',
@@ -680,7 +671,6 @@ const styles = StyleSheet.create({
         paddingVertical: 16,
         borderRadius: 28,
         alignItems: 'center',
-        // Shadow/Glow
         shadowColor: Colors.primary,
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,

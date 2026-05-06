@@ -2,17 +2,24 @@
 // Non-dismissable update required dialog shown on the Splash Screen.
 // Opens the Play Store listing when the user taps "Update Now".
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
     Modal,
     View,
     Text,
     TouchableOpacity,
     StyleSheet,
-    Animated,
     Linking,
     Platform,
 } from 'react-native';
+import Animated, { 
+    useAnimatedStyle, 
+    useSharedValue, 
+    withTiming, 
+    withSpring,
+    interpolate,
+    Extrapolation
+} from 'react-native-reanimated';
 import LinearGradient from 'react-native-linear-gradient';
 import { Colors } from '../styles/GlobalStyles';
 
@@ -24,29 +31,48 @@ import { Colors } from '../styles/GlobalStyles';
  *   onUpdate {function}  – called when user taps "Update Now"
  */
 export default function UpdateRequiredModal({ visible, onUpdate }) {
-    const scaleAnim = useRef(new Animated.Value(0.9)).current;
-    const opacityAnim = useRef(new Animated.Value(0)).current;
+    const progress = useSharedValue(0);
 
     useEffect(() => {
         if (visible) {
-            Animated.parallel([
-                Animated.spring(scaleAnim, {
-                    toValue: 1,
-                    tension: 60,
-                    friction: 10,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(opacityAnim, {
-                    toValue: 1,
-                    duration: 250,
-                    useNativeDriver: true,
-                }),
-            ]).start();
+            progress.value = withTiming(1, { duration: 200 });
         } else {
-            scaleAnim.setValue(0.9);
-            opacityAnim.setValue(0);
+            progress.value = withTiming(0, { duration: 200 });
         }
     }, [visible]);
+
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: progress.value,
+    }));
+
+    const cardStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(
+            progress.value,
+            [0, 1],
+            [100, 0],
+            Extrapolation.CLAMP
+        );
+        const scale = interpolate(
+            progress.value,
+            [0, 1],
+            [0.9, 1],
+            Extrapolation.CLAMP
+        );
+        const opacity = interpolate(
+            progress.value,
+            [0, 0.5, 1],
+            [0, 0, 1],
+            Extrapolation.CLAMP
+        );
+
+        return {
+            opacity,
+            transform: [
+                { translateY: withSpring(translateY, { damping: 50, stiffness: 1000 }) },
+                { scale: withSpring(scale, { damping: 50, stiffness: 1000 }) }
+            ],
+        };
+    });
 
     const handleUpdate = async () => {
         try {
@@ -77,14 +103,11 @@ export default function UpdateRequiredModal({ visible, onUpdate }) {
             statusBarTranslucent
             onRequestClose={() => { /* Intentionally blocked – non-dismissable */ }}
         >
-            <Animated.View style={[styles.overlay, { opacity: opacityAnim }]}>
+            <Animated.View style={[styles.overlay, overlayStyle]}>
                 <Animated.View
                     style={[
                         styles.card,
-                        {
-                            transform: [{ scale: scaleAnim }],
-                            opacity: opacityAnim,
-                        },
+                        cardStyle
                     ]}
                 >
                     <Text style={styles.title}>Update Required</Text>
@@ -171,4 +194,3 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
 });
-

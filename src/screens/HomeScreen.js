@@ -44,6 +44,7 @@ import remoteConfig from '@react-native-firebase/remote-config'; // Firebase Rem
 
 import { useFocusEffect } from '@react-navigation/native';
 import LottieView from 'lottie-react-native';
+import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolateColor, interpolate, Extrapolation } from 'react-native-reanimated';
 
 import { calculateDistance, getRawDistance } from '../utils/distanceUtils';
 import { getConnectorIcon } from '../utils/connectorUtils';
@@ -170,12 +171,33 @@ export default function HomeScreenMain({ navigation, route }) {
     const skeletonOpacity = useRef(new Animated.Value(1)).current;
     const contentOpacity = useRef(new Animated.Value(0)).current;
     const bottomUiFade = useRef(new Animated.Value(0)).current; // For fade-in animation
-    const navTabAnim = useRef(new Animated.Value(0)).current; // 0 = Home, 1 = Activity
+    const navTabAnim = useSharedValue(0);
     const mapRef = useRef(null);
     const qrGradientAnim = useRef(new Animated.Value(0)).current;
-    const pulseAnim = useRef(new Animated.Value(0)).current;
-
+    
     // Draggable Overlay Logic (Mocking TestScreen behavior)
+    
+    const homeTabStyle = useAnimatedStyle(() => {
+        return {
+            width: interpolate(navTabAnim.value, [0, 1], [64, 30]),
+            backgroundColor: interpolateColor(navTabAnim.value, [0, 1], ['#ffffff', 'rgba(30,30,30,0)'])
+        };
+    });
+    
+    const activityTabStyle = useAnimatedStyle(() => {
+        return {
+            width: interpolate(navTabAnim.value, [0, 1], [30, 70]),
+            backgroundColor: interpolateColor(navTabAnim.value, [0, 1], ['rgba(30,30,30,0)', '#ffffff'])
+        };
+    });
+    
+    const homeIconStyle1 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [1, 0]) }));
+    const homeIconStyle2 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [0, 1]) }));
+    const activityIconStyle1 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [1, 0]) }));
+    const activityIconStyle2 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [0, 1]) }));
+    const mapOpacityStyle = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [1, 0]) }));
+    const activityScreenStyle = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [0, 1]) }));
+    
     const pan = useRef(new Animated.Value(300)).current; // Start lower for bounce-in effect
     const currentY = useRef(0);
     const sheetHeightRef = useRef(300); // Approximate mini-card height
@@ -530,7 +552,7 @@ export default function HomeScreenMain({ navigation, route }) {
             Animated.timing(bottomUiFade, {
                 toValue: 1,
                 duration: 250,
-                useNativeDriver: false,
+                useNativeDriver: true,
             }).start();
         }
     }, [isLoading, isSessionCheckComplete]);
@@ -668,30 +690,7 @@ export default function HomeScreenMain({ navigation, route }) {
             };
         }, [])
     );
-
-    // Moved pulseAnim to top of component
-
-    useEffect(() => {
-        if (activeResumeSession) {
-            Animated.loop(
-                Animated.sequence([
-                    Animated.timing(pulseAnim, {
-                        toValue: 1,
-                        duration: 1000,
-                        useNativeDriver: false, // Required for color interpolation
-                    }),
-                    Animated.timing(pulseAnim, {
-                        toValue: 0,
-                        duration: 1000,
-                        useNativeDriver: false,
-                    }),
-                ])
-            ).start();
-        } else {
-            pulseAnim.setValue(0); // Reset
-        }
-    }, [activeResumeSession]);
-
+    
 
 
     const checkActiveSession = async () => {
@@ -796,12 +795,12 @@ export default function HomeScreenMain({ navigation, route }) {
                 Animated.timing(skeletonOpacity, {
                     toValue: 0,
                     duration: 500,
-                    useNativeDriver: false,
+                    useNativeDriver: true,
                 }),
                 Animated.timing(contentOpacity, {
                     toValue: 1,
                     duration: 500,
-                    useNativeDriver: false,
+                    useNativeDriver: true,
                 }),
             ]).start(() => setShowSkeleton(false));
         } else if (isLoading || !isSessionCheckComplete) {
@@ -819,11 +818,7 @@ export default function HomeScreenMain({ navigation, route }) {
         setCurrentTab(tab);
 
         // Animate Tab highlight/position
-        Animated.timing(navTabAnim, {
-            toValue: tab === 'Home' ? 0 : 1,
-            duration: 250,
-            useNativeDriver: false,
-        }).start();
+        navTabAnim.value = withTiming(tab === 'Home' ? 0 : 1, { duration: 250 });
 
         // Animate Overlay Transition: Slide bounce out when not Home, bounce in when Home
         const COLLAPSED_Y = 100;
@@ -1102,16 +1097,10 @@ export default function HomeScreenMain({ navigation, route }) {
             <View style={{ flex: 1, position: 'relative' }}>
 
                 {/* Map (Persisted) */}
-                <Animated.View
+                <Reanimated.View
                     pointerEvents={currentTab === 'Home' ? 'auto' : 'none'}
                     style={[
-                        StyleSheet.absoluteFill,
-                        {
-                            opacity: navTabAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 0]
-                            })
-                        }
+                        StyleSheet.absoluteFill, mapOpacityStyle
                     ]}
                 >
                     <MapView
@@ -1224,21 +1213,14 @@ export default function HomeScreenMain({ navigation, route }) {
                             }
                         })()}
                     </MapView>
-                </Animated.View >
+                </Reanimated.View >
 
                 {/* Floating Controls (Home Only) - Still absolute over Map */}
-                < Animated.View
+                <Reanimated.View
                     pointerEvents={currentTab === 'Home' ? 'box-none' : 'none'}
                     style={
                         [
-                            StyleSheet.absoluteFill,
-                            {
-                                zIndex: 20,
-                                opacity: navTabAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [1, 0]
-                                })
-                            }
+                            StyleSheet.absoluteFill, mapOpacityStyle, { zIndex: 20 }
                         ]}
                 >
                     {/* Stations Horizontal Scroll List */}
@@ -1371,27 +1353,27 @@ export default function HomeScreenMain({ navigation, route }) {
                     }
 
 
-                </Animated.View >
+                </Reanimated.View >
 
                 {/* Activity Screen (Persisted) */}
-                < Animated.View
+                <Reanimated.View
                     pointerEvents={currentTab === 'Activity' ? 'auto' : 'none'}
-                    style={[{ flex: 1, paddingTop: 100, opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }), ...StyleSheet.absoluteFillObject }]}
+                    style={[{ flex: 1, paddingTop: 100, ...StyleSheet.absoluteFillObject }, activityScreenStyle]}
                 >
                     <LibraryScreen navigation={navigation} />
-                </Animated.View >
+                </Reanimated.View >
 
             </View >
 
             {/* Bottom Nav */}
             < View style={[styles.bottomNav, { paddingBottom: safeBottom, height: bottomNavHeight }]} >
                 <TouchableOpacity style={styles.navItem} onPress={() => handleTabChange('Home')}>
-                    <Animated.View style={[styles.navPill, { width: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [64, 30] }), backgroundColor: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: ['#ffffff', 'rgba(30,30,30,0)'] }) }]}>
+                    <Reanimated.View style={[styles.navPill, homeTabStyle]}>
                         <View style={styles.iconNavContainer}>
-                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }]}><HomeIconFilled width={24} height={24} fill={Colors.matteBlack} /></Animated.View>
-                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) }]}><HomeIcon width={24} height={24} fill={Colors.white} /></Animated.View>
+                            <Reanimated.View style={[styles.iconNavWrapper, homeIconStyle1]}><HomeIconFilled width={24} height={24} fill={Colors.matteBlack} /></Reanimated.View>
+                            <Reanimated.View style={[styles.iconNavWrapper, homeIconStyle2]}><HomeIcon width={24} height={24} fill={Colors.white} /></Reanimated.View>
                         </View>
-                    </Animated.View>
+                    </Reanimated.View>
                     <Text style={currentTab === 'Home' ? styles.navTextActive : styles.navText}>Home</Text>
                 </TouchableOpacity>
 
@@ -1420,12 +1402,12 @@ export default function HomeScreenMain({ navigation, route }) {
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.navItem} onPress={() => handleTabChange('Activity')}>
-                    <Animated.View style={[styles.navPill, { width: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 70] }), backgroundColor: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(30,30,30,0)', '#ffffff'] }) }]}>
+                    <Reanimated.View style={[styles.navPill, activityTabStyle]}>
                         <View style={styles.iconNavContainer}>
-                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }]}><LibraryIcon width={24} height={24} fill={Colors.white} /></Animated.View>
-                            <Animated.View style={[styles.iconNavWrapper, { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) }]}><LibraryIconFilled width={24} height={24} fill={Colors.matteBlack} /></Animated.View>
+                            <Reanimated.View style={[styles.iconNavWrapper, activityIconStyle1]}><LibraryIcon width={24} height={24} fill={Colors.white} /></Reanimated.View>
+                            <Reanimated.View style={[styles.iconNavWrapper, activityIconStyle2]}><LibraryIconFilled width={24} height={24} fill={Colors.matteBlack} /></Reanimated.View>
                         </View>
-                    </Animated.View>
+                    </Reanimated.View>
                     <Text style={currentTab === 'Activity' ? styles.navTextActive : styles.navText}>Activity</Text>
                 </TouchableOpacity>
             </View >
@@ -1667,7 +1649,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginTop: 0,
+        marginTop: 16,
     },
     logo: {
         width: 100,

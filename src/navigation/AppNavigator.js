@@ -139,7 +139,11 @@ export default function AppNavigator() {
                 <Stack.Screen name="StationDetails" component={StationDetailsScreen} />
                 <Stack.Screen name="MyBookings" component={MyBookingsScreen} />
                 <Stack.Screen name="ActiveSessions" component={ActiveSessionsScreen} />
-                <Stack.Screen name="Test" component={TestScreen} />
+                <Stack.Screen 
+                    name="Test" 
+                    component={TestScreen} 
+                    options={{ animation: 'none', headerShown: false }}
+                />
                 <Stack.Screen name="Contacts" component={ContactsScreen} />
                 <Stack.Screen name="ContactDetails" component={ContactDetailsScreen} />
             </Stack.Navigator>

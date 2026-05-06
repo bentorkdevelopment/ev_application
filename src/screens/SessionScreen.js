@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import Reanimated, { useSharedValue, useAnimatedStyle, useAnimatedProps, withTiming, withRepeat, withSequence, interpolateColor, interpolate, Easing as ReanimatedEasing, Extrapolation } from 'react-native-reanimated';
 import {
     View,
     Text,
@@ -76,6 +77,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 // ─── Animated Circle ──────────────────────────────────────────────────────────
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+const ReanimatedCircle = Reanimated.createAnimatedComponent(Circle);
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 const MOCK_WEATHER = {
@@ -167,6 +169,32 @@ const MOCK_VIDEOS = [
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// --- Extracted Timer Component ---
+const TimerDisplay = ({ startTime, style }) => {
+    const [elapsed, setElapsed] = useState(0);
+
+    useEffect(() => {
+        if (!startTime) return;
+        const now = Date.now();
+        setElapsed(Math.floor((now - startTime) / 1000));
+        const timer = setInterval(() => {
+            setElapsed(Math.floor((Date.now() - startTime) / 1000));
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [startTime]);
+
+    const formatTime = (totalSeconds) => {
+        const h = Math.floor(totalSeconds / 3600);
+        const m = Math.floor((totalSeconds % 3600) / 60);
+        const s = totalSeconds % 60;
+        if (h > 0) return `${h}h ${m}m ${s}s`;
+        return `${m}m ${s}s`;
+    };
+
+    return <Text style={style}>{formatTime(elapsed)}</Text>;
+};
+// ----------------------------------
+
 export default function SessionScreen({ navigation, route, isOverlay = false }) {
     const insets = useSafeAreaInsets();
 
@@ -180,8 +208,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     // Dynamic Session State
     const [session, setSession] = useState(null);
     const [energyUsed, setEnergyUsed] = useState(0);
-    const [elapsedSeconds, setElapsedSeconds] = useState(0);
-    const [isFetchingSession, setIsFetchingSession] = useState(true);
+        const [isFetchingSession, setIsFetchingSession] = useState(true);
 
     // User State for Dynamic Greeting
     const [user, setUser] = useState(null);
@@ -207,15 +234,15 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
 
     const activeTabRef = useRef(0);
     const suggestedCarouselRef = useRef(null);
-    const tabAnim = useRef(new Animated.Value(0)).current;
-    const contentFadeAnim = useRef(new Animated.Value(1)).current;
+    const tabAnim = useSharedValue(0);
+    const contentFadeAnim = useSharedValue(1);
 
     // Circular progress animation
-    const progressAnim = useRef(new Animated.Value(0)).current;
-    const pulseAnim = useRef(new Animated.Value(1)).current;
+    const progressAnim = useSharedValue(0);
+    const pulseAnim = useSharedValue(1);
 
     // AQI bar animation
-    const aqiBarAnim = useRef(new Animated.Value(0)).current;
+    const aqiBarAnim = useSharedValue(0);
 
     // Draggable UI
     const pan = useRef(new Animated.Value(0)).current;
@@ -348,8 +375,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     useEffect(() => {
         if (!session) return;
         const timer = setInterval(() => {
-            setElapsedSeconds(prev => prev + 1);
-        }, 1000);
+                    }, 1000);
         return () => clearInterval(timer);
     }, [session]);
 
@@ -361,12 +387,10 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
         const targetKwh = session.selectedKwh || 45; // Fallback to 45 if unknown
         const pct = Math.min(100, (energyUsed / targetKwh) * 100);
 
-        Animated.timing(progressAnim, {
-            toValue: pct,
+        progressAnim.value = withTiming(pct, {
             duration: 1000,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
-        }).start();
+            easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+        });
     }, [energyUsed, session?.selectedKwh]);
 
     // Fetch Nearby amenities & Environmental Data
@@ -530,22 +554,15 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     // values in the same component causes "moved to native" crashes on hot-reload
     // with React Native Fabric.
     useEffect(() => {
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulseAnim, { toValue: 1.18, duration: 900, useNativeDriver: false }),
-                Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: false }),
-            ])
-        ).start();
+        pulseAnim.value = withRepeat(withSequence(withTiming(1.18, { duration: 900 }), withTiming(1, { duration: 900 })), -1, false);
     }, []);
 
     // AQI bar
     useEffect(() => {
-        Animated.timing(aqiBarAnim, {
-            toValue: MOCK_AQI.aqi / 200,
+        aqiBarAnim.value = withTiming(MOCK_AQI.aqi / 200, {
             duration: 1200,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
-        }).start();
+            easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+        });
     }, []);
 
 
@@ -553,45 +570,31 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
         if (activeTabRef.current === idx) return;
 
         // Parallel animation: move tab indicator + fade out content
-        Animated.parallel([
-            Animated.timing(tabAnim, {
-                toValue: idx,
-                duration: 250,
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: false,
-            }),
-            Animated.timing(contentFadeAnim, {
-                toValue: 0,
-                duration: 125,
-                easing: Easing.out(Easing.quad),
-                useNativeDriver: false,
-            })
-        ]).start(() => {
-            // Swap content
-            activeTabRef.current = idx;
-            setActiveTab(idx);
-
-            // Fade in new content
-            Animated.timing(contentFadeAnim, {
-                toValue: 1,
-                duration: 125,
-                easing: Easing.in(Easing.quad),
-                useNativeDriver: false,
-            }).start();
+        tabAnim.value = withTiming(idx, {
+            duration: 250,
+            easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+        });
+        contentFadeAnim.value = withTiming(0, {
+            duration: 125,
+            easing: ReanimatedEasing.out(ReanimatedEasing.quad),
+        }, (finished) => {
+            if (finished) {
+                Reanimated.runOnJS(setActiveTab)(idx);
+                activeTabRef.current = idx;
+                contentFadeAnim.value = withTiming(1, {
+                    duration: 125,
+                    easing: ReanimatedEasing.in(ReanimatedEasing.quad),
+                });
+            }
         });
     }, [tabAnim, contentFadeAnim]);
 
     // Session banner pulse (subtle border breath)
-    const bannerPulseAnim = useRef(new Animated.Value(0.18)).current;
+    const bannerPulseAnim = useSharedValue(0.18);
 
     // Banner pulse — slow breath on border opacity
     useEffect(() => {
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(bannerPulseAnim, { toValue: 0.55, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-                Animated.timing(bannerPulseAnim, { toValue: 0.18, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-            ])
-        ).start();
+        bannerPulseAnim.value = withRepeat(withSequence(withTiming(0.55, { duration: 1600, easing: ReanimatedEasing.inOut(ReanimatedEasing.sin) }), withTiming(0.18, { duration: 1600, easing: ReanimatedEasing.inOut(ReanimatedEasing.sin) })), -1, false);
     }, []);
 
     // Circle math
@@ -599,11 +602,17 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     const STROKE = 8;
     const RADIUS = (CIRCLE_SIZE - STROKE) / 2;
     const CIRCUMFERENCE = RADIUS * 2 * Math.PI;
-    const strokeDashoffset = progressAnim.interpolate({
-        inputRange: [0, 100],
-        outputRange: [CIRCUMFERENCE, 0],
-    });
+    
+    const pulseStyle = useAnimatedStyle(() => ({ transform: [{ scale: interpolate(pulseAnim.value, [1, 1.18], [1, 1.1]) }] }));
+    const bannerStyle = useAnimatedStyle(() => ({ borderColor: interpolateColor(bannerPulseAnim.value, [0, 1], ['rgba(57,226,155,0)', 'rgba(57,226,155,1)']) }));
+    const progressBarStyle = useAnimatedStyle(() => ({ width: `${interpolate(progressAnim.value, [0, 100], [0, 100], Extrapolation.CLAMP)}%` }));
+    const aqiBarStyle = useAnimatedStyle(() => ({ width: `${interpolate(aqiBarAnim.value, [0, 100], [0, 100], Extrapolation.CLAMP)}%` }));
+    const tabIndicatorStyle = useAnimatedStyle(() => ({ left: `${interpolate(tabAnim.value, [0, 1], [0, 50])}%` }));
+    const tabContentStyle = useAnimatedStyle(() => ({ opacity: contentFadeAnim.value }));
+    const mainRingProps = useAnimatedProps(() => ({ strokeDashoffset: interpolate(progressAnim.value, [0, 100], [CIRCUMFERENCE, 0]) }));
+    const miniRingProps = useAnimatedProps(() => ({ strokeDashoffset: interpolate(progressAnim.value, [0, 100], [2 * Math.PI * 19, 0]) }));
 
+    
     const formatTime = (s) => {
         const h = Math.floor(s / 3600);
         const m = Math.floor((s % 3600) / 60);
@@ -612,12 +621,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
         return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     };
 
-    // Tab indicator position
     const TAB_W = (SCREEN_W - 40) / TABS.length;
-    const indicatorLeft = tabAnim.interpolate({
-        inputRange: TABS.map((_, i) => i),
-        outputRange: TABS.map((_, i) => i * TAB_W),
-    });
 
     const currentPct = session ? Math.min(100, Math.round((energyUsed / (session.selectedKwh || 45)) * 100)) : 0;
     const estimatedCost = session ? (energyUsed * (session.rate || 0)).toFixed(2) : '0.00';
@@ -634,9 +638,9 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
 
     // ── Render helpers ─────────────────────────────────────────────────────────
     const renderSessionBanner = () => (
-        <Animated.View style={[
+        <Reanimated.View style={[
             styles.sessionBanner,
-            { borderColor: bannerPulseAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(57,226,155,0)', 'rgba(57,226,155,1)'] }) },
+            bannerStyle,
         ]}>
             <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 }}
@@ -652,14 +656,11 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                             fill="none"
                             cx={23} cy={23} r={19}
                         />
-                        <AnimatedCircle
+                        <ReanimatedCircle
                             stroke="#39E29B"
                             strokeWidth={4}
                             strokeDasharray={`${2 * Math.PI * 19} ${2 * Math.PI * 19}`}
-                            strokeDashoffset={progressAnim.interpolate({
-                                inputRange: [0, 100],
-                                outputRange: [2 * Math.PI * 19, 0],
-                            })}
+                            animatedProps={miniRingProps}
                             strokeLinecap="round"
                             fill="none"
                             cx={23} cy={23} r={19}
@@ -687,7 +688,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                             <Text style={styles.sessionBannerStatText}>{energyUsed.toFixed(2)} kWh</Text>
                         </View>
                         <View style={styles.sessionBannerDivider} />
-                        <Text style={styles.sessionBannerStatText}>{formatTime(elapsedSeconds)}</Text>
+                        <TimerDisplay startTime={session?.startTime} style={styles.sessionBannerStatText} />
                     </View>
                 </View>
 
@@ -696,7 +697,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                     <ChevronRight size={16} color="#888" />
                 </View>
             </TouchableOpacity>
-        </Animated.View>
+        </Reanimated.View>
     );
 
     const renderSessionTab = () => (
@@ -732,11 +733,11 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                             r={RADIUS}
                         />
                         {/* Progress arc */}
-                        <AnimatedCircle
+                        <ReanimatedCircle
                             stroke="url(#arcGrad)"
                             strokeWidth={STROKE}
                             strokeDasharray={`${CIRCUMFERENCE} ${CIRCUMFERENCE}`}
-                            strokeDashoffset={strokeDashoffset}
+                            animatedProps={mainRingProps}
                             strokeLinecap="round"
                             fill="none"
                             cx={CIRCLE_SIZE / 2}
@@ -748,9 +749,9 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                     </Svg>
                     {/* Centre content */}
                     <View style={styles.circleInner}>
-                        <Animated.View style={{ transform: [{ scale: pulseAnim.interpolate({ inputRange: [1, 1.18], outputRange: [1, 1.1] }) }] }}>
+                        <Reanimated.View style={pulseStyle}>
                             <Zap size={14} color="#39E29B" fill="#39E29B" />
-                        </Animated.View>
+                        </Reanimated.View>
                         <Text style={styles.pctText}>{currentPct}<Text style={styles.pctUnit}>%</Text></Text>
                         <View style={styles.statusPill}>
                             <View style={styles.activeDot} />
@@ -771,7 +772,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                 />
                 <StatCard
                     label="Duration"
-                    value={formatTime(elapsedSeconds)}
+                    value={<TimerDisplay startTime={session?.startTime} />}
                     unit=""
                     color="#42A5F5"
                 />
@@ -934,22 +935,17 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ color: '#aaa', fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 }}>Duration</Text>
-                    <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }}>{formatTime(elapsedSeconds)}</Text>
+                    <TimerDisplay startTime={session?.startTime} style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }} />
                 </View>
             </View>
 
             {/* Linear Progress bar */}
             <View style={{ height: 8, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 4, marginBottom: 8, overflow: 'hidden' }}>
-                <Animated.View
-                    style={{
+                <Reanimated.View
+                    style={[{
                         height: '100%',
                         backgroundColor: '#39E29B',
-                        width: progressAnim.interpolate({
-                            inputRange: [0, 100],
-                            outputRange: ['0%', '100%'],
-                            extrapolate: 'clamp'
-                        })
-                    }}
+                    }, progressBarStyle]}
                 />
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 }}>
@@ -1123,11 +1119,11 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                         </View>
 
                         {/* ── Content ── */}
-                        <Animated.View style={[styles.tabContent, { paddingHorizontal: 20, opacity: contentFadeAnim }]}>
+                        <Reanimated.View style={[styles.tabContent, { paddingHorizontal: 20 }, tabContentStyle]}>
                             {activeTab === 0 && renderSessionTab()}
                             {activeTab === 1 && renderExploreTab()}
                             {activeTab === 2 && renderContentTab()}
-                        </Animated.View>
+                        </Reanimated.View>
 
                         {/* ── Sticky Footer ── */}
                         <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>

@@ -3,6 +3,7 @@ import {
     View, Text, StyleSheet, TextInput, TouchableOpacity, 
     Modal, KeyboardAvoidingView, Platform, ScrollView 
 } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
 import { X, User, Phone, Mail } from 'lucide-react-native';
 import { Colors, Fonts } from '../styles/GlobalStyles';
 
@@ -10,6 +11,33 @@ export default function AddContactModal({ visible, onClose, onSave }) {
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
     const [email, setEmail] = useState('');
+    const progress = useSharedValue(0);
+
+    React.useEffect(() => {
+        if (visible) {
+            progress.value = withTiming(1, { duration: 200 });
+        } else {
+            progress.value = withTiming(0, { duration: 200 });
+        }
+    }, [visible]);
+
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: progress.value,
+    }));
+
+    const cardStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [100, 0], Extrapolation.CLAMP);
+        const scale = interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP);
+        const opacity = interpolate(progress.value, [0, 0.5, 1], [0, 0, 1], Extrapolation.CLAMP);
+
+        return {
+            opacity,
+            transform: [
+                { translateY: withSpring(translateY, { damping: 1150, stiffness: 1000 }) },
+                { scale: withSpring(scale, { damping: 1150, stiffness: 1000 }) }
+            ],
+        };
+    });
 
     const handleSave = () => {
         if (!name.trim() || !phone.trim()) {
@@ -30,7 +58,7 @@ export default function AddContactModal({ visible, onClose, onSave }) {
     return (
         <Modal
             visible={visible}
-            animationType="slide"
+            animationType="none"
             transparent={true}
             onRequestClose={onClose}
         >
@@ -38,7 +66,8 @@ export default function AddContactModal({ visible, onClose, onSave }) {
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={styles.modalOverlay}
             >
-                <View style={styles.modalContent}>
+                <Animated.View style={[styles.modalOverlay, overlayStyle]}>
+                    <Animated.View style={[styles.modalContent, cardStyle]}>
                     <View style={styles.header}>
                         <Text style={styles.title}>New Contact</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -105,7 +134,8 @@ export default function AddContactModal({ visible, onClose, onSave }) {
                             <Text style={styles.saveBtnText}>Save</Text>
                         </TouchableOpacity>
                     </View>
-                </View>
+                    </Animated.View>
+                </Animated.View>
             </KeyboardAvoidingView>
         </Modal>
     );
@@ -115,14 +145,19 @@ const styles = StyleSheet.create({
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.6)',
-        justifyContent: 'flex-end',
+        justifyContent: 'center', // Changed to centered
+        alignItems: 'center',
+        padding: 20,
     },
     modalContent: {
-        backgroundColor: '#1C1C1E', // standard card color
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
+        backgroundColor: '#1C1C1E', 
+        borderRadius: 24, // Consistent radius
+        width: '100%',
+        maxWidth: 400,
         maxHeight: '80%',
         paddingVertical: 20,
+        borderWidth: 1,
+        borderColor: '#333',
     },
     header: {
         flexDirection: 'row',

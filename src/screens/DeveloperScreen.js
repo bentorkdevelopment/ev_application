@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Switch } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Switch, findNodeHandle } from 'react-native';
+import Animated, { useSharedValue, withTiming, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, ChevronLeft, Search, UserPlus, KeyRound, Smartphone, Layout, Code, Bell, Navigation, Car, TrendingUp, MapPin, Zap, FlaskConical, Shield, X } from 'lucide-react-native';
 import { useAlert } from '../context/AlertContext';
@@ -24,6 +25,7 @@ const DevMenuItem = ({ icon: Icon, title, subtitle, onPress, color = "#fff" }) =
 
 export default function DeveloperScreen({ navigation }) {
     const insets = useSafeAreaInsets();
+    const demoSquareRef = useRef(null);
     const { showAlert } = useAlert();
     const [simulateRelease, setSimRelease] = useState(false);
     const [isUpdateModalVisible, setIsUpdateModalVisible] = useState(false);
@@ -209,6 +211,31 @@ export default function DeveloperScreen({ navigation }) {
                         color="#FF9800"
                         onPress={handleTestNotification}
                     />
+
+                    {/* Shared Transition Demo Square */}
+                    <TouchableOpacity 
+                        style={styles.transitionDemoContainer}
+                        onPress={() => {
+                            if (demoSquareRef.current) {
+                                demoSquareRef.current.measureInWindow((x, y, width, height) => {
+                                    navigation.navigate('Test', { 
+                                        isSharedDemo: true,
+                                        sourceLayout: { x, y, width, height }
+                                    });
+                                });
+                            }
+                        }}
+                    >
+                        <Animated.View 
+                            ref={demoSquareRef}
+                            style={styles.demoSquare}
+                        />
+                        <View style={styles.textContainer}>
+                            <Text style={styles.menuItemTitle}>Shared Transition Demo</Text>
+                            <Text style={styles.menuItemSubtitle}>Tap the square to fly into Test Screen</Text>
+                        </View>
+                        <ChevronRight size={20} color="#444" />
+                    </TouchableOpacity>
                 </View>
 
                 <Text style={[styles.sectionTitle, { marginTop: 30 }]}>App Info</Text>
@@ -401,5 +428,23 @@ const styles = StyleSheet.create({
         color: '#000',
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    transitionDemoContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 15,
+        paddingHorizontal: 15,
+    },
+    demoSquare: {
+        width: 40,
+        height: 40,
+        backgroundColor: '#39E29B',
+        borderRadius: 12,
+        marginRight: 15,
+        shadowColor: '#39E29B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 5,
     },
 });
