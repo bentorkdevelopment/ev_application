@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, StatusBar, Platform, Alert, Animated, Easing, ActivityIndicator, Linking, Share, Dimensions, LayoutAnimation, UIManager, ScrollView, PanResponder } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, StatusBar, Platform, Alert, Animated, Easing, ActivityIndicator, Linking, Share, Dimensions, LayoutAnimation, UIManager, ScrollView, PanResponder, DeviceEventEmitter, InteractionManager } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from "@react-native-community/blur";
+// import { BlurView } from "@react-native-community/blur";
 // Custom Icons
 // Custom Icons
 import SearchIcon from '../assets/icons/Outlined/search_24dp_E3E3E3_FILL0_wght300_GRAD-25_opsz24.svg';
@@ -40,11 +40,11 @@ import { stationsApi, locationsApi, chargersApi, sessionApi, notificationApi, re
 import { authService } from '../services/auth';
 import { useAlert } from '../context/AlertContext';
 import BackgroundLocationModal from '../components/BackgroundLocationModal';
+import GetLocation from 'react-native-get-location';
 import remoteConfig from '@react-native-firebase/remote-config'; // Firebase Remote Config
 
 import { useFocusEffect } from '@react-navigation/native';
 import LottieView from 'lottie-react-native';
-import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolateColor, interpolate, Extrapolation } from 'react-native-reanimated';
 
 import { calculateDistance, getRawDistance } from '../utils/distanceUtils';
 import { getConnectorIcon } from '../utils/connectorUtils';
@@ -134,7 +134,121 @@ const StarRating = ({ rating }) => {
 // }
 // ];
 
-export default function HomeScreenMain({ navigation, route }) {
+// Memoized StationMarkers component to prevent heavy map re-renders on every state change
+const StationMarkers = React.memo(({
+    isMaintenance,
+    region,
+    ZOOM_THRESHOLD_CITY,
+    ZOOM_THRESHOLD_MID,
+    clusters,
+    stations,
+    selectedStation,
+    onStationPress,
+    BoltIcon,
+    CafeIcon,
+    Colors,
+    mapRef
+}) => {
+    if (isMaintenance) return null;
+
+    if (region.latitudeDelta > ZOOM_THRESHOLD_CITY) {
+        // STAGE 3: CITY CLUSTERS
+        return clusters.city.map((cluster, index) => (
+            <Marker
+                key={`cluster_city_${index}`}
+                coordinate={{ latitude: cluster.latitude, longitude: cluster.longitude }}
+                onPress={() => {
+                    const newRegion = {
+                        latitude: cluster.latitude,
+                        longitude: cluster.longitude,
+                        latitudeDelta: 0.15,
+                        longitudeDelta: 0.15,
+                    };
+                    onStationPress(null, newRegion);
+                }}
+                zIndex={100}
+                tracksViewChanges={false}
+            >
+                <View style={styles.clusterContainer}>
+                    <Text style={styles.clusterText}>{cluster.count}</Text>
+                    <Text style={{ color: Colors.matteBlack, fontSize: 10, fontWeight: '600' }}>{cluster.name}</Text>
+                </View>
+            </Marker>
+        ));
+
+    } else if (region.latitudeDelta > ZOOM_THRESHOLD_MID) {
+        // STAGE 2: MID CLUSTERS (Neighborhood)
+        return clusters.city.map((cluster, index) => (
+            <Marker
+                key={`cluster_mid_${index}`}
+                coordinate={{ latitude: cluster.latitude, longitude: cluster.longitude }}
+                onPress={() => {
+                    const newRegion = {
+                        latitude: cluster.latitude,
+                        longitude: cluster.longitude,
+                        latitudeDelta: 0.04,
+                        longitudeDelta: 0.04,
+                    };
+                    onStationPress(null, newRegion);
+                }}
+                zIndex={90}
+                tracksViewChanges={false}
+            >
+                <View style={styles.midClusterContainer}>
+                    <Text style={styles.midClusterText}>{cluster.count}</Text>
+                </View>
+            </Marker>
+        ));
+
+    } else {
+        // STAGE 1: INDIVIDUAL PINS
+        return stations.map((station, index) => {
+            const isSelected = String(selectedStation?.id) === String(station.id);
+            let MarkerIcon = BoltIcon;
+            let baseColor = Colors.matteBlack;
+
+            if (station.type === 'CAFE') {
+                MarkerIcon = CafeIcon;
+                baseColor = "#FF9800";
+            }
+
+            const bubbleColor = isSelected ? Colors.white : Colors.matteBlack;
+            const iconFill = isSelected ? Colors.matteBlack : Colors.white;
+            const borderWidth = isSelected ? 0 : 2;
+            const borderColor = isSelected ? 'transparent' : Colors.white;
+
+            return (
+                <Marker
+                    key={`station_${station.id}_${index}_${isSelected ? 'sel' : 'norm'}`}
+                    coordinate={{ latitude: Number(station.latitude), longitude: Number(station.longitude) }}
+                    onPress={() => onStationPress(station)}
+                    zIndex={isSelected ? 20 : 10}
+                    tracksViewChanges={false}
+                >
+                    <View style={[styles.markerContainer, { transform: [{ scale: isSelected ? 1.1 : 1 }] }]}>
+                        <View style={[styles.markerBubble, { backgroundColor: bubbleColor, borderWidth: borderWidth, borderColor: borderColor }]}>
+                            <MarkerIcon
+                                width={22}
+                                height={22}
+                                fill={iconFill}
+                            />
+                        </View>
+                        <View style={[styles.markerArrow, { borderTopColor: isSelected ? bubbleColor : borderColor, marginTop: -1 }]} />
+                    </View>
+                </Marker>
+            );
+        });
+    }
+}, (prev, next) => {
+    return (
+        prev.isMaintenance === next.isMaintenance &&
+        prev.stations.length === next.stations.length &&
+        prev.selectedStation?.id === next.selectedStation?.id &&
+        Math.abs(prev.region.latitudeDelta - next.region.latitudeDelta) < 0.0001
+    );
+});
+
+export default function HomeScreen({ navigation, route }) {
     const insets = useSafeAreaInsets();
     const { showAlert } = useAlert();
     const [currentTab, setCurrentTab] = useState('Home');
@@ -171,33 +285,62 @@ export default function HomeScreenMain({ navigation, route }) {
     const skeletonOpacity = useRef(new Animated.Value(1)).current;
     const contentOpacity = useRef(new Animated.Value(0)).current;
     const bottomUiFade = useRef(new Animated.Value(0)).current; // For fade-in animation
-    const navTabAnim = useSharedValue(0);
+    const navTabAnim = React.useRef(new Animated.Value(0)).current;
     const mapRef = useRef(null);
     const qrGradientAnim = useRef(new Animated.Value(0)).current;
-    
+    const pollingLockedUntil = useRef(0);
+
+    const fetchUserLocation = async () => {
+        try {
+            const location = await GetLocation.getCurrentPosition({
+                enableHighAccuracy: true,
+                timeout: 15000,
+            });
+            const userLoc = {
+                latitude: location.latitude,
+                longitude: location.longitude,
+            };
+            setThrottledUserLocation(userLoc);
+            setRegion(prev => ({
+                ...prev,
+                userLocation: userLoc
+            }));
+        } catch (error) {
+            console.warn("HomeScreen: Location fetch failed:", error);
+        }
+    };
+
     // Draggable Overlay Logic (Mocking TestScreen behavior)
-    
-    const homeTabStyle = useAnimatedStyle(() => {
-        return {
-            width: interpolate(navTabAnim.value, [0, 1], [64, 30]),
-            backgroundColor: interpolateColor(navTabAnim.value, [0, 1], ['#ffffff', 'rgba(30,30,30,0)'])
-        };
-    });
-    
-    const activityTabStyle = useAnimatedStyle(() => {
-        return {
-            width: interpolate(navTabAnim.value, [0, 1], [30, 70]),
-            backgroundColor: interpolateColor(navTabAnim.value, [0, 1], ['rgba(30,30,30,0)', '#ffffff'])
-        };
-    });
-    
-    const homeIconStyle1 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [1, 0]) }));
-    const homeIconStyle2 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [0, 1]) }));
-    const activityIconStyle1 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [1, 0]) }));
-    const activityIconStyle2 = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [0, 1]) }));
-    const mapOpacityStyle = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [1, 0]) }));
-    const activityScreenStyle = useAnimatedStyle(() => ({ opacity: interpolate(navTabAnim.value, [0, 1], [0, 1]) }));
-    
+
+    const homeTabStyle = {
+        width: navTabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [64, 30],
+        }),
+        backgroundColor: navTabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['#ffffff', 'rgba(30,30,30,0)'],
+        }),
+    };
+
+    const activityTabStyle = {
+        width: navTabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [30, 70],
+        }),
+        backgroundColor: navTabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['rgba(30,30,30,0)', '#ffffff'],
+        }),
+    };
+
+    const homeIconStyle1 = { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) };
+    const homeIconStyle2 = { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) };
+    const activityIconStyle1 = { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) };
+    const activityIconStyle2 = { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) };
+    const mapOpacityStyle = { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) };
+    const activityScreenStyle = { opacity: navTabAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) };
+
     const pan = useRef(new Animated.Value(300)).current; // Start lower for bounce-in effect
     const currentY = useRef(0);
     const sheetHeightRef = useRef(300); // Approximate mini-card height
@@ -215,7 +358,7 @@ export default function HomeScreenMain({ navigation, route }) {
             const m = Math.floor((diffSec % 3600) / 60);
             const s = diffSec % 60;
             const h = Math.floor(diffSec / 3600);
-            
+
             if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
             return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         };
@@ -225,7 +368,7 @@ export default function HomeScreenMain({ navigation, route }) {
             try {
                 const energy = await sessionApi.getSessionEnergy(activeResumeSession.resumeSessionId);
                 setLiveEnergy(energy);
-                
+
                 if (activeResumeSession.selectedKwh && activeResumeSession.selectedKwh > 0) {
                     let progress = (energy / activeResumeSession.selectedKwh) * 100;
                     if (progress > 100) progress = 100;
@@ -275,7 +418,7 @@ export default function HomeScreenMain({ navigation, route }) {
                 delay: 500, // Small delay for smooth entry
             }).start();
         }
-    }, [activeResumeSession]);
+    }, [activeResumeSession, pan]);
 
     useEffect(() => {
         const id = pan.addListener(({ value }) => {
@@ -297,7 +440,7 @@ export default function HomeScreenMain({ navigation, route }) {
             ),
             onPanResponderRelease: (e, gestureState) => {
                 pan.flattenOffset();
-                
+
                 // Snap boundary settings
                 const EXPANDED_Y = -100; // Pulled Up (Visible above nav)
                 const COLLAPSED_Y = 100;   // Tucked behind nav
@@ -349,7 +492,7 @@ export default function HomeScreenMain({ navigation, route }) {
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
         }).start();
-    }, []);
+    }, [qrGradientAnim]);
 
     const qrRotate = qrGradientAnim.interpolate({
         inputRange: [0, 1],
@@ -417,7 +560,9 @@ export default function HomeScreenMain({ navigation, route }) {
     // Auto-focus nearest station on first location fix
     const hasAutoFocusedRef = useRef(false);
     useEffect(() => {
-        if (throttledUserLocation && nearestStations.length > 0 && !hasAutoFocusedRef.current && !route.params?.foundStationId) {
+        const hasStationIdParam = !!route.params?.foundStationId;
+        const hasStations = nearestStations.length > 0;
+        if (throttledUserLocation && hasStations && !hasAutoFocusedRef.current && !hasStationIdParam) {
             hasAutoFocusedRef.current = true;
             const topStation = nearestStations[0];
             setSelectedStation(topStation);
@@ -430,7 +575,7 @@ export default function HomeScreenMain({ navigation, route }) {
             setRegion(newRegion);
             mapRef.current?.animateToRegion(newRegion, 1200);
         }
-    }, [throttledUserLocation, nearestStations.length > 0]);
+    }, [throttledUserLocation, nearestStations, route.params?.foundStationId]);
 
 
     // Moved Refs to Top Level to satisfy Rules of Hooks
@@ -555,7 +700,7 @@ export default function HomeScreenMain({ navigation, route }) {
                 useNativeDriver: true,
             }).start();
         }
-    }, [isLoading, isSessionCheckComplete]);
+    }, [isLoading, isSessionCheckComplete, bottomUiFade]);
 
     // Fetch Notification Count
     useEffect(() => {
@@ -668,13 +813,22 @@ export default function HomeScreenMain({ navigation, route }) {
 
     useFocusEffect(
         React.useCallback(() => {
-            checkActiveSession();
+            const task = InteractionManager.runAfterInteractions(() => {
+                checkActiveSession();
 
-            // Initial fetch - Only show loader if we have NO data
-            // If data exists, fetch silently to prevent UI refresh
-            fetchData(stations.length > 0);
+                // Initial fetch - Only show loader if we have NO data
+                fetchData(stations.length > 0);
+            });
 
-            // Poll every 30 seconds for real-time updates (Reduced from 2s to safe load)
+            // Fetch user location on focus
+            fetchUserLocation();
+
+            // Poll user location every 2 minutes
+            const locationInterval = setInterval(() => {
+                fetchUserLocation();
+            }, LOCATION_UPDATE_INTERVAL);
+
+            // Poll every 30 seconds for real-time updates
             const dataInterval = setInterval(() => {
                 fetchData(true); // Silent update
             }, 30000);
@@ -684,16 +838,32 @@ export default function HomeScreenMain({ navigation, route }) {
                 checkActiveSession();
             }, 10000);
 
+            // Listen for session stop events to clear state immediately
+            const stopSub = DeviceEventEmitter.addListener('session_stopped', (id) => {
+                console.log("HomeScreen received session_stopped for:", id);
+                pollingLockedUntil.current = Date.now() + 20000;
+                setActiveResumeSession(null);
+                hasBouncedIn.current = false;
+            });
+
             return () => {
+                task.cancel();
+                clearInterval(locationInterval);
                 clearInterval(dataInterval);
                 clearInterval(sessionInterval);
+                stopSub.remove();
             };
-        }, [])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [stations.length])
     );
-    
+
 
 
     const checkActiveSession = async () => {
+        if (Date.now() < pollingLockedUntil.current) {
+            console.log("Skipping active session check: polling is currently locked.");
+            return;
+        }
         try {
             const user = await authService.getUser();
             if (user) {
@@ -785,6 +955,7 @@ export default function HomeScreenMain({ navigation, route }) {
                 navigation.setParams({ foundStationId: null, foundChargerId: null });
             }
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [route.params?.foundStationId, stations]);
 
 
@@ -808,7 +979,7 @@ export default function HomeScreenMain({ navigation, route }) {
             skeletonOpacity.setValue(1);
             contentOpacity.setValue(0);
         }
-    }, [isLoading, isSessionCheckComplete]);
+    }, [isLoading, isSessionCheckComplete, contentOpacity, skeletonOpacity]);
 
     const handleTabChange = (tab) => {
         // User Fix: Dismiss Bottom Sheet automatically when Home is clicked
@@ -818,12 +989,16 @@ export default function HomeScreenMain({ navigation, route }) {
         setCurrentTab(tab);
 
         // Animate Tab highlight/position
-        navTabAnim.value = withTiming(tab === 'Home' ? 0 : 1, { duration: 250 });
+        Animated.timing(navTabAnim, {
+            toValue: tab === 'Home' ? 0 : 1,
+            duration: 250,
+            useNativeDriver: false, // Color and width interpolation don't always support native driver
+        }).start();
 
         // Animate Overlay Transition: Slide bounce out when not Home, bounce in when Home
         const COLLAPSED_Y = 100;
         const OUT_Y = 300;
-        
+
         Animated.spring(pan, {
             toValue: tab === 'Home' ? COLLAPSED_Y : OUT_Y,
             useNativeDriver: false,
@@ -840,6 +1015,7 @@ export default function HomeScreenMain({ navigation, route }) {
             handleTabChange(route.params.tab);
             navigation.setParams({ tab: undefined }); // Clear param
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [route.params?.tab]);
 
     const fetchData = async (silent = false) => {
@@ -945,12 +1121,38 @@ export default function HomeScreenMain({ navigation, route }) {
 
             // Only update Map Region on INITIAL LOAD (when stations were empty)
             if (stations.length === 0 && stationsWithRatings.length > 0) {
-                const initialRegion = {
-                    latitude: stationsWithRatings[0].latitude,
-                    longitude: stationsWithRatings[0].longitude,
+                let targetStation = stationsWithRatings[0];
+                let initialRegion = {
+                    latitude: targetStation.latitude,
+                    longitude: targetStation.longitude,
                     latitudeDelta: 0.0922,
                     longitudeDelta: 0.0421,
                 };
+
+                if (throttledUserLocation) {
+                    let minDistance = Infinity;
+                    stationsWithRatings.forEach(s => {
+                        const dist = getRawDistance(
+                            throttledUserLocation.latitude,
+                            throttledUserLocation.longitude,
+                            s.latitude,
+                            s.longitude
+                        );
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            targetStation = s;
+                        }
+                    });
+
+                    initialRegion = {
+                        latitude: Number(targetStation.latitude),
+                        longitude: Number(targetStation.longitude),
+                        latitudeDelta: 0.04,
+                        longitudeDelta: 0.04,
+                    };
+                    hasAutoFocusedRef.current = true; // Mark as auto-focused to avoid double animation
+                }
+
                 setRegion(initialRegion);
 
                 // Animate only once
@@ -958,7 +1160,7 @@ export default function HomeScreenMain({ navigation, route }) {
                     mapRef.current?.animateToRegion(initialRegion, 1000);
                 }, 500);
 
-                setSelectedStation(stationsWithRatings[0]);
+                setSelectedStation(targetStation);
             } else if (selectedStation) {
                 // Update currently selected station with new data (to show new rating immediately)
                 const updated = stationsWithRatings.find(s => s.id === selectedStation.id);
@@ -1097,7 +1299,7 @@ export default function HomeScreenMain({ navigation, route }) {
             <View style={{ flex: 1, position: 'relative' }}>
 
                 {/* Map (Persisted) */}
-                <Reanimated.View
+                <Animated.View
                     pointerEvents={currentTab === 'Home' ? 'auto' : 'none'}
                     style={[
                         StyleSheet.absoluteFill, mapOpacityStyle
@@ -1112,111 +1314,34 @@ export default function HomeScreenMain({ navigation, route }) {
                         initialRegion={region}
                         showsTraffic={false}
                         showsIndoors={false}
+                        showsUserLocation={true}
                         onRegionChangeComplete={(r) => setRegion(prev => ({ ...r, userLocation: prev.userLocation }))}
                     >
-                        {(() => {
-                            if (isMaintenance) return null;
-
-                            if (region.latitudeDelta > ZOOM_THRESHOLD_CITY) {
-                                // STAGE 3: CITY CLUSTERS
-                                return clusters.city.map((cluster, index) => (
-                                    <Marker
-                                        key={`cluster_city_${index}`}
-                                        coordinate={{ latitude: cluster.latitude, longitude: cluster.longitude }}
-                                        onPress={() => {
-                                            const newRegion = {
-                                                latitude: cluster.latitude,
-                                                longitude: cluster.longitude,
-                                                latitudeDelta: 0.15,
-                                                longitudeDelta: 0.15,
-                                            };
-                                            setRegion(newRegion);
-                                            mapRef.current?.animateToRegion(newRegion, 1000);
-                                        }}
-                                        zIndex={100}
-                                        tracksViewChanges={false}
-                                    >
-                                        <View style={styles.clusterContainer}>
-                                            <Text style={styles.clusterText}>{cluster.count}</Text>
-                                            <Text style={{ color: Colors.matteBlack, fontSize: 10, fontWeight: '600' }}>{cluster.name}</Text>
-                                        </View>
-                                    </Marker>
-                                ));
-
-                            } else if (region.latitudeDelta > ZOOM_THRESHOLD_MID) {
-                                // STAGE 2: MID CLUSTERS (Neighborhood)
-                                // Currently, mid clusters are not implemented in the new clustering logic.
-                                // Fallback to showing individual pins or city clusters if no mid clusters.
-                                return clusters.city.map((cluster, index) => (
-                                    <Marker
-                                        key={`cluster_mid_${index}`}
-                                        coordinate={{ latitude: cluster.latitude, longitude: cluster.longitude }}
-                                        onPress={() => {
-                                            const newRegion = {
-                                                latitude: cluster.latitude,
-                                                longitude: cluster.longitude,
-                                                latitudeDelta: 0.04,
-                                                longitudeDelta: 0.04,
-                                            };
-                                            setRegion(newRegion);
-                                            mapRef.current?.animateToRegion(newRegion, 800);
-                                        }}
-                                        zIndex={90}
-                                        tracksViewChanges={false}
-                                    >
-                                        <View style={styles.midClusterContainer}>
-                                            <Text style={styles.midClusterText}>{cluster.count}</Text>
-                                        </View>
-                                    </Marker>
-                                ));
-
-                            } else {
-                                // STAGE 1: INDIVIDUAL PINS
-                                return stations.map((station, index) => {
-                                    const isSelected = String(selectedStation?.id) === String(station.id);
-                                    let MarkerIcon = BoltIcon;
-                                    let baseColor = Colors.matteBlack;
-
-                                    if (station.type === 'CAFE') {
-                                        MarkerIcon = CafeIcon;
-                                        baseColor = "#FF9800";
-                                    }
-
-                                    // Active Pin: Background White, Icon Black
-                                    // Inactive Pin: Background MatteBlack, Border White (for contrast), Icon White
-                                    const bubbleColor = isSelected ? Colors.white : Colors.matteBlack;
-                                    const iconFill = isSelected ? Colors.matteBlack : Colors.white;
-                                    const borderWidth = isSelected ? 0 : 2;
-                                    const borderColor = isSelected ? 'transparent' : Colors.white;
-
-                                    return (
-                                        <Marker
-                                            key={`station_${station.id}_${index}_${isSelected ? 'sel' : 'norm'}`}
-                                            coordinate={{ latitude: Number(station.latitude), longitude: Number(station.longitude) }}
-                                            onPress={() => handleStationPress(station)}
-                                            zIndex={isSelected ? 20 : 10}
-                                            tracksViewChanges={false}
-                                        >
-                                            <View style={[styles.markerContainer, { transform: [{ scale: isSelected ? 1.1 : 1 }] }]}>
-                                                <View style={[styles.markerBubble, { backgroundColor: bubbleColor, borderWidth: borderWidth, borderColor: borderColor }]}>
-                                                    <MarkerIcon
-                                                        width={22}
-                                                        height={22}
-                                                        fill={iconFill}
-                                                    />
-                                                </View>
-                                                <View style={[styles.markerArrow, { borderTopColor: isSelected ? bubbleColor : borderColor, marginTop: -1 }]} />
-                                            </View>
-                                        </Marker>
-                                    );
-                                });
-                            }
-                        })()}
+                        <StationMarkers
+                            isMaintenance={isMaintenance}
+                            region={region}
+                            ZOOM_THRESHOLD_CITY={ZOOM_THRESHOLD_CITY}
+                            ZOOM_THRESHOLD_MID={ZOOM_THRESHOLD_MID}
+                            clusters={clusters}
+                            stations={stations}
+                            selectedStation={selectedStation}
+                            onStationPress={(station, newRegion) => {
+                                if (newRegion) {
+                                    setRegion(newRegion);
+                                    mapRef.current?.animateToRegion(newRegion, 800);
+                                } else {
+                                    handleStationPress(station);
+                                }
+                            }}
+                            BoltIcon={BoltIcon}
+                            CafeIcon={CafeIcon}
+                            Colors={Colors}
+                        />
                     </MapView>
-                </Reanimated.View >
+                </Animated.View >
 
                 {/* Floating Controls (Home Only) - Still absolute over Map */}
-                <Reanimated.View
+                <Animated.View
                     pointerEvents={currentTab === 'Home' ? 'box-none' : 'none'}
                     style={
                         [
@@ -1353,32 +1478,32 @@ export default function HomeScreenMain({ navigation, route }) {
                     }
 
 
-                </Reanimated.View >
+                </Animated.View >
 
                 {/* Activity Screen (Persisted) */}
-                <Reanimated.View
+                <Animated.View
                     pointerEvents={currentTab === 'Activity' ? 'auto' : 'none'}
                     style={[{ flex: 1, paddingTop: 100, ...StyleSheet.absoluteFillObject }, activityScreenStyle]}
                 >
                     <LibraryScreen navigation={navigation} />
-                </Reanimated.View >
+                </Animated.View >
 
             </View >
 
             {/* Bottom Nav */}
             < View style={[styles.bottomNav, { paddingBottom: safeBottom, height: bottomNavHeight }]} >
                 <TouchableOpacity style={styles.navItem} onPress={() => handleTabChange('Home')}>
-                    <Reanimated.View style={[styles.navPill, homeTabStyle]}>
+                    <Animated.View style={[styles.navPill, homeTabStyle]}>
                         <View style={styles.iconNavContainer}>
-                            <Reanimated.View style={[styles.iconNavWrapper, homeIconStyle1]}><HomeIconFilled width={24} height={24} fill={Colors.matteBlack} /></Reanimated.View>
-                            <Reanimated.View style={[styles.iconNavWrapper, homeIconStyle2]}><HomeIcon width={24} height={24} fill={Colors.white} /></Reanimated.View>
+                            <Animated.View style={[styles.iconNavWrapper, homeIconStyle1]}><HomeIconFilled width={24} height={24} fill={Colors.matteBlack} /></Animated.View>
+                            <Animated.View style={[styles.iconNavWrapper, homeIconStyle2]}><HomeIcon width={24} height={24} fill={Colors.white} /></Animated.View>
                         </View>
-                    </Reanimated.View>
+                    </Animated.View>
                     <Text style={currentTab === 'Home' ? styles.navTextActive : styles.navText}>Home</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
-                    style={styles.centerNavBtnContainer} 
+                <TouchableOpacity
+                    style={styles.centerNavBtnContainer}
                     onPress={() => {
                         if (isMaintenance) {
                             showAlert("Maintenance in Progress", "QR Scanning is currently unavailable.");
@@ -1402,12 +1527,12 @@ export default function HomeScreenMain({ navigation, route }) {
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.navItem} onPress={() => handleTabChange('Activity')}>
-                    <Reanimated.View style={[styles.navPill, activityTabStyle]}>
+                    <Animated.View style={[styles.navPill, activityTabStyle]}>
                         <View style={styles.iconNavContainer}>
-                            <Reanimated.View style={[styles.iconNavWrapper, activityIconStyle1]}><LibraryIcon width={24} height={24} fill={Colors.white} /></Reanimated.View>
-                            <Reanimated.View style={[styles.iconNavWrapper, activityIconStyle2]}><LibraryIconFilled width={24} height={24} fill={Colors.matteBlack} /></Reanimated.View>
+                            <Animated.View style={[styles.iconNavWrapper, activityIconStyle1]}><LibraryIcon width={24} height={24} fill={Colors.white} /></Animated.View>
+                            <Animated.View style={[styles.iconNavWrapper, activityIconStyle2]}><LibraryIconFilled width={24} height={24} fill={Colors.matteBlack} /></Animated.View>
                         </View>
-                    </Reanimated.View>
+                    </Animated.View>
                     <Text style={currentTab === 'Activity' ? styles.navTextActive : styles.navText}>Activity</Text>
                 </TouchableOpacity>
             </View >
@@ -1423,33 +1548,36 @@ export default function HomeScreenMain({ navigation, route }) {
             {/* Background Location Consent – shown once on first HomeScreen visit */}
             <BackgroundLocationModal
                 visible={showBgLocationModal}
-                onDone={() => setShowBgLocationModal(false)}
+                onDone={() => {
+                    setShowBgLocationModal(false);
+                    fetchUserLocation();
+                }}
             />
 
             {/* Backdrop Dimmer for Draggable Overlay */}
             {activeResumeSession && (
-                <Animated.View 
+                <Animated.View
                     pointerEvents="none"
-                    style={[StyleSheet.absoluteFill, { 
-                        backgroundColor: '#000', 
+                    style={[StyleSheet.absoluteFill, {
+                        backgroundColor: '#000',
                         zIndex: 90, // Just below the card
                         opacity: pan.interpolate({
                             inputRange: [0, 180],
-                            outputRange: [0.1, 0], 
+                            outputRange: [0.1, 0],
                             extrapolate: 'clamp'
                         })
-                    }]} 
+                    }]}
                 />
             )}
 
             {/* Active Session Overlay (Mock Draggable Prototype) */}
             {
                 activeResumeSession && (
-                    <Animated.View 
-                        style={[styles.mockOverlayWrapper, { 
-                            bottom: 0, 
+                    <Animated.View
+                        style={[styles.mockOverlayWrapper, {
+                            bottom: 0,
                             transform: [{ translateY: pan }]
-                        }]} 
+                        }]}
                         pointerEvents="box-none"
                     >
                         <View style={styles.mockOverlayCard} onLayout={(e) => { sheetHeightRef.current = e.nativeEvent.layout.height; }}>
@@ -1457,7 +1585,7 @@ export default function HomeScreenMain({ navigation, route }) {
                                 <View style={styles.dragBar} />
                             </View>
 
-                            <Animated.View style={[styles.mockHeader, { 
+                            <Animated.View style={[styles.mockHeader, {
                                 justifyContent: 'space-between',
                                 marginTop: pan.interpolate({
                                     inputRange: [-100, 0, 100],
@@ -1470,9 +1598,9 @@ export default function HomeScreenMain({ navigation, route }) {
                                     extrapolate: 'clamp'
                                 }),
                             }]}>
-                                <Animated.View style={{ 
-                                    flexDirection: 'row', 
-                                    alignItems: 'flex-start', 
+                                <Animated.View style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'flex-start',
                                     gap: 8,
                                     opacity: collapseOpacity,
                                     height: pan.interpolate({
@@ -1491,7 +1619,7 @@ export default function HomeScreenMain({ navigation, route }) {
                                     </View>
                                 </Animated.View>
                                 <Animated.View style={{ opacity: collapseOpacity }}>
-                                    <TouchableOpacity 
+                                    <TouchableOpacity
                                         style={{ padding: 4 }}
                                         onPress={() => toggleSession(-100)}
                                     >
@@ -1525,7 +1653,7 @@ export default function HomeScreenMain({ navigation, route }) {
 
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                                 <Animated.View style={{ opacity: expandOpacity, width: expandOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 48] }), overflow: 'hidden' }}>
-                                    <TouchableOpacity 
+                                    <TouchableOpacity
                                         style={[styles.mockActionBtn, { width: 48, paddingHorizontal: 0 }]}
                                         onPress={() => toggleSession(100)}
                                     >
@@ -1533,7 +1661,7 @@ export default function HomeScreenMain({ navigation, route }) {
                                     </TouchableOpacity>
                                 </Animated.View>
 
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[styles.mockActionBtn, { flex: 1 }]}
                                     onPress={() => navigation.navigate('Session', activeResumeSession)}
                                 >
@@ -1541,7 +1669,7 @@ export default function HomeScreenMain({ navigation, route }) {
                                 </TouchableOpacity>
 
                                 <Animated.View style={{ opacity: collapseOpacity, width: collapseOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 48] }), overflow: 'hidden' }}>
-                                    <TouchableOpacity 
+                                    <TouchableOpacity
                                         style={[styles.mockActionBtn, { width: 48, paddingHorizontal: 0 }]}
                                         onPress={() => toggleSession(-100)}
                                     >
@@ -1561,9 +1689,9 @@ export default function HomeScreenMain({ navigation, route }) {
 
                 if (!showBanner) return null;
 
-                const isOngoing = isMaintenance; 
+                const isOngoing = isMaintenance;
                 const title = isOngoing ? "Ongoing Maintenance" : "Upcoming Maintenance Break";
-                const subtitle = isOngoing 
+                const subtitle = isOngoing
                     ? "Some services are temporarily unavailable. We appreciate your patience."
                     : `On ${maintenanceDate}, some services will be unavailable. Please plan accordingly.`;
 
@@ -1978,6 +2106,7 @@ const styles = StyleSheet.create({
     actionText: {
         color: '#fff',
         fontSize: 12,
+        fontFamily: 'Google Sans',
     },
 
     bottomNav: {
@@ -2012,11 +2141,13 @@ const styles = StyleSheet.create({
         color: Colors.white,
         fontSize: 12,
         marginTop: 2,
+        fontFamily: 'Google Sans',
     },
     navText: {
         color: '#888',
         fontSize: 12,
         marginTop: 2,
+        fontFamily: 'Google Sans',
     },
     centerNavBtnContainer: {
         top: -10,
@@ -2074,10 +2205,12 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: 'bold',
         marginBottom: 2,
+        fontFamily: 'Google Sans',
     },
     snackbarSubtitle: {
         color: '#ccc',
         fontSize: 12,
+        fontFamily: 'Google Sans',
     },
     snackbarAction: {
         backgroundColor: 'rgba(255,255,255,0.1)',
@@ -2089,6 +2222,7 @@ const styles = StyleSheet.create({
         color: Colors.statusGreen,
         fontWeight: 'bold',
         fontSize: 12,
+        fontFamily: 'Google Sans',
     },
     iconNavContainer: {
         width: 24,
@@ -2119,6 +2253,7 @@ const styles = StyleSheet.create({
         color: Colors.matteBlack,
         fontWeight: 'bold',
         fontSize: 22,
+        fontFamily: 'Google Sans',
     },
     // Mid Cluster Styles
     midClusterContainer: {
@@ -2140,6 +2275,7 @@ const styles = StyleSheet.create({
         color: Colors.matteBlack,
         fontWeight: 'bold',
         fontSize: 14,
+        fontFamily: 'Google Sans',
     },
     // Cafe Chips Styles
     cafeChipsContainer: {
@@ -2181,11 +2317,13 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         marginRight: 8,
         maxWidth: 120, // Limit width
+        fontFamily: 'Google Sans',
     },
     cafeRating: {
         color: '#FFD700', // Gold
         fontSize: 10,
         fontWeight: 'bold',
+        fontFamily: 'Google Sans',
     },
     activeIndicatorContainer: {
         flexDirection: 'row',

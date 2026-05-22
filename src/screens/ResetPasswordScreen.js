@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Platform, KeyboardAvoidingView, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Platform, KeyboardAvoidingView, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Mail, Lock, ChevronLeft, KeyRound, CheckCircle, ArrowRight } from 'lucide-react-native';
 import { authApi } from '../services/api';
+import { useAlert } from '../context/AlertContext';
 
 export default function ResetPasswordScreen({ navigation }) {
+    const { showAlert } = useAlert();
     const insets = useSafeAreaInsets();
 
     // UI State
@@ -19,7 +21,7 @@ export default function ResetPasswordScreen({ navigation }) {
 
     const handleSendCode = async () => {
         if (!email || !email.includes('@')) {
-            Alert.alert("Invalid Email", "Please enter a valid email address.");
+            showAlert("Invalid Email", "Please enter a valid email address.");
             return;
         }
 
@@ -27,9 +29,9 @@ export default function ResetPasswordScreen({ navigation }) {
         try {
             await authApi.requestOtp(email);
             setStep(2);
-            Alert.alert("Code Sent", `We've sent a verification code to ${email}`);
+            showAlert("Code Sent", `We've sent a verification code to ${email}`);
         } catch (error) {
-            Alert.alert("Request Failed", error.userMessage || "Could not send reset code. Please check your email.");
+            showAlert("Request Failed", error.userMessage || "Could not send reset code. Please check your email.");
         } finally {
             setLoading(false);
         }
@@ -37,26 +39,27 @@ export default function ResetPasswordScreen({ navigation }) {
 
     const handleResetPassword = async () => {
         if (!otp || otp.length < 4) {
-            Alert.alert("Invalid Code", "Please enter the valid verification code.");
+            showAlert("Invalid Code", "Please enter the valid verification code.");
             return;
         }
-        if (!newPassword || newPassword.length < 6) {
-            Alert.alert("Weak Password", "Password must be at least 6 characters.");
+        const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,64}$/;
+        if (!newPassword || !passwordRegex.test(newPassword)) {
+            showAlert("Weak Password", "Password must be at least 8 characters and include uppercase, lowercase, and a number.");
             return;
         }
         if (newPassword !== confirmPassword) {
-            Alert.alert("Mismatch", "Passwords do not match.");
+            showAlert("Mismatch", "Passwords do not match.");
             return;
         }
 
         setLoading(true);
         try {
             await authApi.resetPassword(email, otp, newPassword);
-            Alert.alert("Success", "Your password has been reset successfully!", [
+            showAlert("Success", "Your password has been reset successfully!", [
                 { text: "Login Now", onPress: () => navigation.navigate('Login') }
             ]);
         } catch (error) {
-            Alert.alert("Reset Failed", error.userMessage || "Could not reset password. Please check your verification code.");
+            showAlert("Reset Failed", error.userMessage || "Could not reset password. Please check your verification code.");
         } finally {
             setLoading(false);
         }

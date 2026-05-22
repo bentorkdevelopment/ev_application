@@ -349,6 +349,9 @@ export const razorpayApi = {
     }
 };
 
+// Local cache to track sessions that were just stopped to avoid stale API data
+const stoppedSessionIds = new Set();
+
 export const sessionApi = {
     startSession: async (sessionData) => {
         try {
@@ -360,7 +363,24 @@ export const sessionApi = {
     },
     stopSession: async (sessionId) => {
         try {
-            const response = await api.post('/sessions/stop', { sessionId });
+            // Send redundant keys to satisfy different backend implementations
+            const response = await api.post('/sessions/stop', { 
+                sessionId: sessionId,
+                id: sessionId 
+            });
+            
+            // Blacklist this ID locally for 60 seconds to prevent it showing as active
+            if (sessionId) {
+                const sidStr = String(sessionId);
+                stoppedSessionIds.add(sidStr);
+                DeviceEventEmitter.emit('session_stopped', sessionId);
+                
+                // Keep in blacklist for 60s to allow backend to update its state
+                setTimeout(() => {
+                    stoppedSessionIds.delete(sidStr);
+                    console.log("Blacklist cleared for session:", sidStr);
+                }, 60000);
+            }
             return response.data;
         } catch (error) {
             throw error;
@@ -407,8 +427,9 @@ export const sessionApi = {
 
                     const matchesUser = (sUserId == userId || sUserEmail === userId);
                     const isActive = ['ACTIVE', 'CHARGING', 'STARTED', 'INITIATED'].includes(status);
+                    const isRecentlyStopped = stoppedSessionIds.has(String(s.id));
 
-                    return matchesUser && isActive;
+                    return matchesUser && isActive && !isRecentlyStopped;
                 });
 
                 // Sort by ID descending to get the LATEST session
@@ -467,8 +488,9 @@ export const sessionApi = {
 
                     // Filter for active/busy statuses
                     const isActive = ['ACTIVE', 'CHARGING', 'STARTED', 'INITIATED'].includes(status);
+                    const isRecentlyStopped = stoppedSessionIds.has(String(s.id));
 
-                    return matchesUser && isActive;
+                    return matchesUser && isActive && !isRecentlyStopped;
                 }).map(session => {
                     // Time parsing
                     let startTimeTs = Date.now();
@@ -508,6 +530,17 @@ export const sessionApi = {
             return response.data;
         } catch (error) {
             throw error;
+        }
+    },
+    getSessionDetails: async (sessionId) => {
+        try {
+            const response = await api.get('/sessions/all/records');
+            const sessions = Array.isArray(response.data) ? response.data : [];
+            const found = sessions.find(s => String(s.id) === String(sessionId));
+            return found || null;
+        } catch (error) {
+            console.warn("Failed to get session details:", error.message);
+            return null;
         }
     }
 };
@@ -639,17 +672,6 @@ export const reviewsApi = {
     }
 };
 
-export const emergencyApi = {
-    getContact: async (stationId) => {
-        try {
-            const response = await api.get(`/emergency-contacts/${stationId}`);
-            return response.data;
-        } catch (error) {
-            throw error;
-        }
-    }
-};
-
 export const slotsApi = {
     getAvailableSlots: async (chargerId, date) => {
         try {
@@ -735,6 +757,18 @@ export const slotBookingApi = {
         }
     }
 
+};
+
+// Emergency / Station Contacts API
+export const emergencyApi = {
+    getContact: async (stationId) => {
+        try {
+            const response = await api.get(`/emergency-contacts/${stationId}`);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    }
 };
 
 export default api;

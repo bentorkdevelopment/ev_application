@@ -6,7 +6,6 @@ import {
     StyleSheet,
     PermissionsAndroid,
     Platform,
-    Alert,
     TouchableOpacity,
     Dimensions,
     StatusBar,
@@ -19,12 +18,14 @@ import {
 import { Camera } from 'react-native-camera-kit';
 import { useNavigation, useRoute, useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { ChevronLeft } from 'lucide-react-native';
+import { useAlert } from '../context/AlertContext';
 
 const { width, height } = Dimensions.get('window');
 const SCAN_AREA_SIZE = width * 0.7; // Square size, 1:1 ratio
 const OVERLAY_COLOR = 'rgba(0, 0, 0, 0.6)';
 
 const QRScannerScreen = () => {
+    const { showAlert } = useAlert();
     const navigation = useNavigation();
     const route = useRoute();
     const isFocused = useIsFocused();
@@ -179,7 +180,7 @@ const QRScannerScreen = () => {
 
         // If not found or logic failed
         setIsProcessing(false);
-        Alert.alert("Invalid QR", `Code: ${code}\nCould not find a matching charger.`, [
+        showAlert("Invalid QR", `Code: ${code}\nCould not find a matching charger.`, [
             { text: "Retry", onPress: () => setScanned(false) }
         ]);
     };

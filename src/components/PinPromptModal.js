@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions, Vibration } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions, Vibration, Animated } from 'react-native';
 import { X, Delete } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -11,33 +10,40 @@ export default function PinPromptModal({ visible, onClose, onSuccess, mode = 've
     const [step, setStep] = useState(1); // 1: Enter, 2: Confirm (only for 'set' mode)
     const [firstPin, setFirstPin] = useState('');
     const [error, setError] = useState('');
-    const progress = useSharedValue(0);
+    const progress = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
-        if (visible) {
-            progress.value = withTiming(1, { duration: 200 });
-        } else {
-            progress.value = withTiming(0, { duration: 200 });
-        }
+        Animated.timing(progress, {
+            toValue: visible ? 1 : 0,
+            duration: 200,
+            useNativeDriver: true,
+        }).start();
     }, [visible]);
 
-    const overlayStyle = useAnimatedStyle(() => ({
-        opacity: progress.value,
-    }));
+    const overlayStyle = {
+        opacity: progress,
+    };
 
-    const cardStyle = useAnimatedStyle(() => {
-        const translateY = interpolate(progress.value, [0, 1], [100, 0], Extrapolation.CLAMP);
-        const scale = interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP);
-        const opacity = interpolate(progress.value, [0, 0.5, 1], [0, 0, 1], Extrapolation.CLAMP);
-
-        return {
-            opacity,
-            transform: [
-                { translateY: withSpring(translateY, { damping: 1150, stiffness: 1000 }) },
-                { scale: withSpring(scale, { damping: 1150, stiffness: 1000 }) }
-            ],
-        };
-    });
+    const cardStyle = {
+        opacity: progress.interpolate({
+            inputRange: [0, 0.5, 1],
+            outputRange: [0, 0, 1],
+        }),
+        transform: [
+            {
+                translateY: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [100, 0],
+                }),
+            },
+            {
+                scale: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.9, 1],
+                }),
+            },
+        ],
+    };
 
     useEffect(() => {
         if (visible) {

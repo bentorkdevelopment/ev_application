@@ -1,23 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator, TextInput, KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native';
+import { jwtDecode } from 'jwt-decode';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ActivityIndicator, TextInput, KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { authService } from '../services/auth';
 import { authApi, userApi } from '../services/api';
 import { GOOGLE_WEB_CLIENT_ID } from '@env';
 import { Mail, Lock, Eye, EyeOff, Smartphone } from 'lucide-react-native';
+import { useAlert } from '../context/AlertContext';
 
 export default function LoginScreen({ navigation, route }) {
+    const { showAlert } = useAlert();
     const [loading, setLoading] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
 
     useEffect(() => {
-        // Clear any stale session data on mount
-        const clearSession = async () => {
-            await authService.logout();
-        };
-        clearSession();
+        // Note: Do NOT call authService.logout() here.
+        // It destroys valid sessions when LoginScreen re-mounts (e.g. back navigation).
+        // Session clearing is handled inside processLoginSuccess() before saving new data.
 
         const clientId = GOOGLE_WEB_CLIENT_ID;
         if (!clientId || clientId.length < 10) {
@@ -34,7 +35,7 @@ export default function LoginScreen({ navigation, route }) {
 
     const handleManualLogin = async () => {
         if (!email || !password) {
-            Alert.alert("Missing Fields", "Please enter both email and password.");
+            showAlert("Missing Fields", "Please enter both email and password.");
             return;
         }
 
@@ -47,12 +48,12 @@ export default function LoginScreen({ navigation, route }) {
             if (response && response.token) {
                 await processLoginSuccess(response);
             } else {
-                Alert.alert("Login Failed", "Invalid response from server.");
+                showAlert("Login Failed", "Invalid response from server.");
             }
         } catch (error) {
             console.error("Manual login error:", error);
             const msg = error.userMessage || (error.response?.data?.message) || "Invalid email or password.";
-            Alert.alert("Login Failed", msg);
+            showAlert("Login Failed", msg);
         } finally {
             setLoading(false);
         }
@@ -67,7 +68,7 @@ export default function LoginScreen({ navigation, route }) {
             if (userEmail) {
                 handleBackendGoogleLogin(userEmail.trim());
             } else {
-                Alert.alert("Login Error", "Could not retrieve email from Google Account.");
+                showAlert("Login Error", "Could not retrieve email from Google Account.");
             }
         } catch (error) {
             if (error.code === statusCodes.SIGN_IN_CANCELLED) {
@@ -75,10 +76,10 @@ export default function LoginScreen({ navigation, route }) {
             } else if (error.code === statusCodes.IN_PROGRESS) {
                 console.log("Login in progress");
             } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-                Alert.alert("Error", "Google Play Services not available");
+                showAlert("Error", "Google Play Services not available");
             } else {
                 console.error(error);
-                Alert.alert("Error", "Google Login failed. Please try again.");
+                showAlert("Error", "Google Login failed. Please try again.");
             }
         }
     };
@@ -90,11 +91,11 @@ export default function LoginScreen({ navigation, route }) {
             if (response && response.token) {
                 await processLoginSuccess(response);
             } else {
-                Alert.alert("Login Failed", "No token received from server.");
+                showAlert("Login Failed", "No token received from server.");
             }
         } catch (error) {
             console.error("Backend Google login error:", error);
-            Alert.alert("Login Failed", error.userMessage || "Server Error during Google Login");
+            showAlert("Login Failed", error.userMessage || "Server Error during Google Login");
         } finally {
             setLoading(false);
         }
@@ -107,44 +108,71 @@ export default function LoginScreen({ navigation, route }) {
         // 2. Save new Token
         const token = response.token;
         if (!token) {
-            Alert.alert("Login Error", "No token received.");
+            showAlert("Login Error", "No token received.");
             return;
         }
         await authService.setToken(token);
 
-        // 3. Get User Details if missing (Manual Login)
+        // 3. Build user data from ALL available sources
+
+        // Source A: Direct fields from login response
         let userData = {
             id: response.id || response.userId,
             name: response.name,
-            email: response.email,
+            email: response.email || email, // Always fallback to form input email
             imageUrl: response.imageUrl,
             mobile: response.mobile
         };
 
-        // If name is missing, we likely just got a token. Fetch full profile.
-        if (!userData.name) {
-            try {
-                // We rely on the 'email' state variable from the form for manual login
-                // OR decode token if possible. For now, use the email state if available.
-                const targetEmail = response.email || email; // 'email' from component state
-
-                if (targetEmail) {
-                    const userDetails = await userApi.getUserDetails(targetEmail);
-                    userData = {
-                        id: userDetails.id,
-                        name: userDetails.name,
-                        email: userDetails.email,
-                        imageUrl: userDetails.imageUrl,
-                        mobile: userDetails.mobile
-                    };
-                }
-            } catch (err) {
-                console.warn("Failed to fetch user details after login:", err);
-                // Continue anyway, maybe retrying later or relying on partial data
+        // Source B: Decode JWT token for additional user info
+        // This is reliable (no API call) and works even if getUserDetails fails.
+        try {
+            const decoded = jwtDecode(token);
+            if (decoded) {
+                userData.id = userData.id || decoded.id || decoded.userId || decoded.sub;
+                userData.name = userData.name || decoded.name || decoded.fullName;
+                userData.email = userData.email || decoded.email || decoded.sub;
             }
+            console.log("JWT decoded claims:", JSON.stringify(decoded));
+        } catch (decodeErr) {
+            console.warn("JWT decode failed (non-critical):", decodeErr?.message);
         }
 
+        // Ensure email is never empty (absolute fallback to form input)
+        if (!userData.email) {
+            userData.email = email;
+        }
+
+        // Save immediately so downstream screens have data even if getUserDetails fails
         await authService.setUser(userData);
+        console.log("User data saved (initial):", JSON.stringify(userData));
+
+        // Source C: Fetch full profile from backend to enhance data (non-critical)
+        // This runs AFTER saving initial data, so login is not blocked if it fails.
+        if (!userData.name || !userData.id) {
+            const targetEmail = userData.email;
+            if (targetEmail) {
+                try {
+                    const userDetails = await userApi.getUserDetails(targetEmail);
+                    if (userDetails) {
+                        userData = {
+                            id: userDetails.id || userData.id,
+                            name: userDetails.name || userData.name,
+                            email: userDetails.email || userData.email,
+                            imageUrl: userDetails.imageUrl || userData.imageUrl,
+                            mobile: userDetails.mobile || userData.mobile
+                        };
+                        await authService.setUser(userData);
+                        console.log("User data enhanced:", JSON.stringify(userData));
+                    }
+                } catch (err) {
+                    console.warn("Failed to fetch user details after login:", err?.message);
+                    // GUARD: If getUserDetails returned 401, the auth_session_expired handler
+                    // may have wiped our token. Re-save it to undo the damage.
+                    await authService.setToken(token);
+                }
+            }
+        }
 
         // 4. FCM Token Sync (Send to Backend)
         try {
@@ -195,7 +223,7 @@ export default function LoginScreen({ navigation, route }) {
             style={styles.container}
         >
             <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                 <Image
                     source={require('../assets/images/logo.png')}
                     style={styles.logo}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, StatusBar, Dimensions, ActivityIndicator, Animated, Linking, Alert, Platform, Switch, PanResponder, Vibration } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, StatusBar, Dimensions, ActivityIndicator, Animated, Linking, Platform, Switch, PanResponder, Vibration } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import { ChevronLeft, MapPin, BatteryCharging, Navigation, Zap, X, Navigation2, Check, Plus, ChevronUp, ChevronDown } from 'lucide-react-native';
@@ -256,8 +256,8 @@ export default function TripPlannerScreen({ navigation }) {
 
         console.log('[Nav] Final URL:', url);
 
-        // Native Alert Confirmation
-        Alert.alert(
+        // Alert Confirmation
+        showAlert(
             "Start Navigation",
             `Opening in Google Maps with ${selectedStations.length} stops.`,
             [

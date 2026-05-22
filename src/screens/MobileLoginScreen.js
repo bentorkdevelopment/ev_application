@@ -5,6 +5,7 @@ import { Phone, ChevronLeft, ArrowRight, Lock, Eye, EyeOff, Smartphone } from 'l
 import { useAlert } from '../context/AlertContext';
 import { authApi, userApi } from '../services/api';
 import { authService } from '../services/auth';
+import { jwtDecode } from 'jwt-decode';
 
 export default function MobileLoginScreen({ navigation }) {
     const insets = useSafeAreaInsets();
@@ -80,7 +81,6 @@ export default function MobileLoginScreen({ navigation }) {
 
             // 3b. Decode Token to get extra details
             try {
-                const { jwtDecode } = require('jwt-decode');
                 if (token) {
                     const decoded = jwtDecode(token);
                     console.log("3b. Decoded Token:", JSON.stringify(decoded));

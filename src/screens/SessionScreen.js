@@ -8,7 +8,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import Reanimated, { useSharedValue, useAnimatedStyle, useAnimatedProps, withTiming, withRepeat, withSequence, interpolateColor, interpolate, Easing as ReanimatedEasing, Extrapolation } from 'react-native-reanimated';
 import {
     View,
     Text,
@@ -72,12 +71,10 @@ import calendarService from '../services/calendarService';
 import { authService } from '../services/auth';
 import { sessionApi, notificationApi, reviewsApi } from '../services/api';
 import { useAlert } from '../context/AlertContext';
-
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 // ─── Animated Circle ──────────────────────────────────────────────────────────
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-const ReanimatedCircle = Reanimated.createAnimatedComponent(Circle);
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 const MOCK_WEATHER = {
@@ -197,6 +194,7 @@ const TimerDisplay = ({ startTime, style }) => {
 
 export default function SessionScreen({ navigation, route, isOverlay = false }) {
     const insets = useSafeAreaInsets();
+    const { showAlert } = useAlert();
 
     // Tabs: 0 = Session, 1 = Explore, 2 = Content
     const TABS = ['Session', 'Explore', 'Content'];
@@ -205,10 +203,46 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     const [nearbyPlaces, setNearbyPlaces] = useState([]);
     const [isLoadingPlaces, setIsLoadingPlaces] = useState(true);
 
-    // Dynamic Session State
-    const [session, setSession] = useState(null);
+    // Session State Machine
+    const SESSION_STATES = {
+        PREPARING: 'PREPARING',
+        CHARGING: 'CHARGING',
+        STOPPING: 'STOPPING',
+        COMPLETED: 'COMPLETED',
+    };
+    const [sessionState, setSessionState] = useState(SESSION_STATES.CHARGING);
+
+    const [dots, setDots] = useState('.');
+    useEffect(() => {
+        if (sessionState === SESSION_STATES.PREPARING || sessionState === SESSION_STATES.STOPPING) {
+            const interval = setInterval(() => {
+                setDots(prev => {
+                    if (prev === '.') return '..';
+                    if (prev === '..') return '...';
+                    return '.';
+                });
+            }, 500);
+            return () => clearInterval(interval);
+        } else {
+            setDots('.');
+        }
+    }, [sessionState]);
+
+    const [session, setSession] = useState(route.params || null);
+    const sessionStateRef = useRef(sessionState);
+    const sessionRef = useRef(session);
+
+    useEffect(() => {
+        sessionStateRef.current = sessionState;
+    }, [sessionState]);
+
+    useEffect(() => {
+        sessionRef.current = session;
+    }, [session]);
+
     const [energyUsed, setEnergyUsed] = useState(0);
-        const [isFetchingSession, setIsFetchingSession] = useState(true);
+    const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const [isFetchingSession, setIsFetchingSession] = useState(true);
 
     // User State for Dynamic Greeting
     const [user, setUser] = useState(null);
@@ -225,6 +259,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     // Calendar State
     const [calendarEvents, setCalendarEvents] = useState([]);
     const [isCalendarModalVisible, setIsCalendarModalVisible] = useState(false);
+    const pollingLockedUntil = useRef(0);
 
     // Minimized Redirect State
     const [isMinimized, setIsMinimized] = useState(false);
@@ -234,15 +269,16 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
 
     const activeTabRef = useRef(0);
     const suggestedCarouselRef = useRef(null);
-    const tabAnim = useSharedValue(0);
-    const contentFadeAnim = useSharedValue(1);
+    const tabAnim = React.useRef(new Animated.Value(0)).current;
+    const contentFadeAnim = React.useRef(new Animated.Value(1)).current;
 
     // Circular progress animation
-    const progressAnim = useSharedValue(0);
-    const pulseAnim = useSharedValue(1);
+    const progressAnim = React.useRef(new Animated.Value(0)).current;
+    const pulseAnim = React.useRef(new Animated.Value(1)).current;
 
     // AQI bar animation
-    const aqiBarAnim = useSharedValue(0);
+    const aqiBarAnim = React.useRef(new Animated.Value(0)).current;
+    const bannerPulseAnim = React.useRef(new Animated.Value(0.18)).current;
 
     // Draggable UI
     const pan = useRef(new Animated.Value(0)).current;
@@ -258,7 +294,9 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
 
     const panResponder = useRef(
         PanResponder.create({
-            onMoveShouldSetPanResponder: () => true,
+            // Disable dragging to minimize as per request
+            onMoveShouldSetPanResponder: () => false,
+            onStartShouldSetPanResponder: () => false,
             onPanResponderGrant: () => {
                 pan.setOffset(currentY.current);
                 pan.setValue(0);
@@ -314,38 +352,76 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     }, []);
 
     // Fetch Real Active Session
-    useEffect(() => {
-        const fetchSession = async () => {
-            try {
-                const userData = await authService.getUser();
-                if (userData) setUser(userData);
+    const fetchSession = useCallback(async () => {
+        if (Date.now() < pollingLockedUntil.current) return;
+        try {
+            const userData = await authService.getUser();
+            if (userData) setUser(userData);
 
-                const userId = userData?.id || userData?.userId || userData?.email;
-                if (!userId) return;
+            const userId = userData?.id || userData?.userId || userData?.email;
+            if (!userId) return;
 
-                const activeSession = await sessionApi.getActiveSession(userId);
+            const activeSession = await sessionApi.getActiveSession(userId);
 
-                if (activeSession) {
-                    setSession(activeSession);
-                    // Initial energy fetch
-                    const energy = await sessionApi.getSessionEnergy(activeSession.sessionId);
-                    setEnergyUsed(energy);
+            if (activeSession) {
+                setSession(activeSession);
+                setSessionState(SESSION_STATES.CHARGING);
+                // Initial energy fetch
+                const energy = await sessionApi.getSessionEnergy(activeSession.sessionId);
+                setEnergyUsed(energy);
 
-                    // Calculate elapsed time
-                    const now = Date.now();
-                    const start = activeSession.startTime || now;
-                    setElapsedSeconds(Math.floor((now - start) / 1000));
+                // Calculate elapsed time
+                const now = Date.now();
+                const start = activeSession.startTime || now;
+                setElapsedSeconds(Math.floor((now - start) / 1000));
+            } else {
+                // If we were expecting a session from params but none is active, 
+                // we might need to start it. This is handled by a separate effect.
+                if (!route.params?.chargerId) {
+                    setSession(null);
                 }
-            } catch (err) {
-                console.warn("Failed to fetch session for TestScreen:", err);
-            } finally {
-                setIsFetchingSession(false);
+            }
+        } catch (err) {
+            console.warn("Failed to fetch session:", err);
+        } finally {
+            setIsFetchingSession(false);
+        }
+    }, [route.params]);
+
+    useEffect(() => {
+        fetchSession();
+
+        // Start session if params provided and no session active
+        const startNewSession = async () => {
+            if (route.params?.chargerId && !isOverlay) {
+                try {
+                    // Check if already started (to avoid double start on re-render)
+                    const user = await authService.getUser();
+                    const userId = user?.id || user?.userId || user?.email;
+                    const active = await sessionApi.getActiveSession(userId);
+                    
+                    if (!active) {
+                        console.log("Starting new session with params:", route.params);
+                        setSessionState(SESSION_STATES.PREPARING);
+                        await sessionApi.startSession(route.params);
+                        await fetchSession();
+                    } else {
+                        setSession(active);
+                        setSessionState(SESSION_STATES.CHARGING);
+                    }
+                } catch (e) {
+                    console.error("Start session failed:", e);
+                    setSessionState(SESSION_STATES.CHARGING); // Fallback
+                }
             }
         };
 
-        fetchSession();
+        startNewSession();
+
         // Poll for energy updates every 10 seconds
         const interval = setInterval(async () => {
+            if (sessionStateRef.current === SESSION_STATES.STOPPING || Date.now() < pollingLockedUntil.current) return;
+
             try {
                 const user = await authService.getUser();
                 if (!user) return;
@@ -354,6 +430,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
 
                 if (activeSession) {
                     setSession(activeSession);
+                    setSessionState(SESSION_STATES.CHARGING);
                     const energy = await sessionApi.getSessionEnergy(activeSession.sessionId);
                     setEnergyUsed(energy);
 
@@ -361,7 +438,38 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                     const start = activeSession.startTime || now;
                     setElapsedSeconds(Math.floor((now - start) / 1000));
                 } else {
-                    setSession(null);
+                    // If we were charging but now activeSession is null, it might have finished automatically
+                    if (sessionStateRef.current === SESSION_STATES.CHARGING && sessionRef.current?.sessionId) {
+                        console.log("Session seems to have finished automatically. Checking records...");
+                        pollingLockedUntil.current = Date.now() + 60000;
+                        try {
+                            const finishedSession = await sessionApi.getSessionDetails(sessionRef.current.sessionId);
+                            if (finishedSession) {
+                                console.log("Found finished session record automatically:", finishedSession);
+                                setSessionState(SESSION_STATES.COMPLETED);
+                                navigation.replace('Invoice', {
+                                    sessionData: finishedSession,
+                                    sessionId: sessionRef.current.sessionId,
+                                    finalEnergy: finishedSession.energyKwh || finishedSession.energyUsed || energyUsed,
+                                    finalDuration: finishedSession.duration || elapsedSeconds,
+                                    stationName: sessionRef.current?.stationName,
+                                    rate: sessionRef.current?.rate,
+                                    chargerType: sessionRef.current?.chargerType,
+                                    stationId: sessionRef.current?.stationId
+                                });
+                                return;
+                            }
+                        } catch (err) {
+                            console.warn("Failed to automatically retrieve finished session:", err);
+                        }
+                        
+                        // Fallback if we cannot find the finished session details
+                        navigation.replace('Home');
+                    }
+                    
+                    if (!route.params?.chargerId) {
+                        setSession(null);
+                    }
                 }
             } catch (e) {
                 // Background poll fail is okay
@@ -369,15 +477,16 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
         }, 10000);
 
         return () => clearInterval(interval);
-    }, []);
+    }, [fetchSession, route.params, isOverlay]);
 
     // Local Timer for elapsed time (smooth updates)
     useEffect(() => {
-        if (!session) return;
+        if (!session || sessionState !== SESSION_STATES.CHARGING) return;
         const timer = setInterval(() => {
-                    }, 1000);
+            setElapsedSeconds(prev => prev + 1);
+        }, 1000);
         return () => clearInterval(timer);
-    }, [session]);
+    }, [session, sessionState]);
 
     // Animate progress whenever energy or percentage changes
     useEffect(() => {
@@ -387,10 +496,12 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
         const targetKwh = session.selectedKwh || 45; // Fallback to 45 if unknown
         const pct = Math.min(100, (energyUsed / targetKwh) * 100);
 
-        progressAnim.value = withTiming(pct, {
+        Animated.timing(progressAnim, {
+            toValue: pct,
             duration: 1000,
-            easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
-        });
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
     }, [energyUsed, session?.selectedKwh]);
 
     // Fetch Nearby amenities & Environmental Data
@@ -554,15 +665,22 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     // values in the same component causes "moved to native" crashes on hot-reload
     // with React Native Fabric.
     useEffect(() => {
-        pulseAnim.value = withRepeat(withSequence(withTiming(1.18, { duration: 900 }), withTiming(1, { duration: 900 })), -1, false);
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, { toValue: 1.18, duration: 900, useNativeDriver: true }),
+                Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+            ])
+        ).start();
     }, []);
 
     // AQI bar
     useEffect(() => {
-        aqiBarAnim.value = withTiming(MOCK_AQI.aqi / 200, {
+        Animated.timing(aqiBarAnim, {
+            toValue: MOCK_AQI.aqi / 200,
             duration: 1200,
-            easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
-        });
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
     }, []);
 
 
@@ -570,31 +688,43 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
         if (activeTabRef.current === idx) return;
 
         // Parallel animation: move tab indicator + fade out content
-        tabAnim.value = withTiming(idx, {
-            duration: 250,
-            easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
-        });
-        contentFadeAnim.value = withTiming(0, {
+        Animated.timing(contentFadeAnim, {
+            toValue: 0,
             duration: 125,
-            easing: ReanimatedEasing.out(ReanimatedEasing.quad),
-        }, (finished) => {
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+        }).start(({ finished }) => {
             if (finished) {
-                Reanimated.runOnJS(setActiveTab)(idx);
+                setActiveTab(idx);
                 activeTabRef.current = idx;
-                contentFadeAnim.value = withTiming(1, {
+                Animated.timing(contentFadeAnim, {
+                    toValue: 1,
                     duration: 125,
-                    easing: ReanimatedEasing.in(ReanimatedEasing.quad),
-                });
+                    easing: Easing.in(Easing.quad),
+                    useNativeDriver: true,
+                }).start();
             }
         });
+
+        Animated.timing(tabAnim, {
+            toValue: idx,
+            duration: 250,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
     }, [tabAnim, contentFadeAnim]);
 
     // Session banner pulse (subtle border breath)
-    const bannerPulseAnim = useSharedValue(0.18);
+    // const bannerPulseAnim = useSharedValue(0.18); // Handled in state setup
 
     // Banner pulse — slow breath on border opacity
     useEffect(() => {
-        bannerPulseAnim.value = withRepeat(withSequence(withTiming(0.55, { duration: 1600, easing: ReanimatedEasing.inOut(ReanimatedEasing.sin) }), withTiming(0.18, { duration: 1600, easing: ReanimatedEasing.inOut(ReanimatedEasing.sin) })), -1, false);
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(bannerPulseAnim, { toValue: 0.55, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+                Animated.timing(bannerPulseAnim, { toValue: 0.18, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+            ])
+        ).start();
     }, []);
 
     // Circle math
@@ -603,14 +733,16 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
     const RADIUS = (CIRCLE_SIZE - STROKE) / 2;
     const CIRCUMFERENCE = RADIUS * 2 * Math.PI;
     
-    const pulseStyle = useAnimatedStyle(() => ({ transform: [{ scale: interpolate(pulseAnim.value, [1, 1.18], [1, 1.1]) }] }));
-    const bannerStyle = useAnimatedStyle(() => ({ borderColor: interpolateColor(bannerPulseAnim.value, [0, 1], ['rgba(57,226,155,0)', 'rgba(57,226,155,1)']) }));
-    const progressBarStyle = useAnimatedStyle(() => ({ width: `${interpolate(progressAnim.value, [0, 100], [0, 100], Extrapolation.CLAMP)}%` }));
-    const aqiBarStyle = useAnimatedStyle(() => ({ width: `${interpolate(aqiBarAnim.value, [0, 100], [0, 100], Extrapolation.CLAMP)}%` }));
-    const tabIndicatorStyle = useAnimatedStyle(() => ({ left: `${interpolate(tabAnim.value, [0, 1], [0, 50])}%` }));
-    const tabContentStyle = useAnimatedStyle(() => ({ opacity: contentFadeAnim.value }));
-    const mainRingProps = useAnimatedProps(() => ({ strokeDashoffset: interpolate(progressAnim.value, [0, 100], [CIRCUMFERENCE, 0]) }));
-    const miniRingProps = useAnimatedProps(() => ({ strokeDashoffset: interpolate(progressAnim.value, [0, 100], [2 * Math.PI * 19, 0]) }));
+    const pulseStyle = { transform: [{ scale: pulseAnim.interpolate({ inputRange: [1, 1.18], outputRange: [1, 1.1] }) }] };
+    const bannerStyle = { borderColor: bannerPulseAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(57,226,155,0)', 'rgba(57,226,155,1)'] }) };
+    const progressBarStyle = { width: progressAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'], extrapolate: 'clamp' }) };
+    const aqiBarStyle = { width: aqiBarAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'], extrapolate: 'clamp' }) };
+    const tabIndicatorStyle = { left: tabAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '50%'] }) };
+    const tabContentStyle = { opacity: contentFadeAnim };
+    
+    // For Circle components, we'll pass props directly in JSX using interpolation
+    // const mainRingProps = ... (deprecated)
+    // const miniRingProps = ... (deprecated)
 
     
     const formatTime = (s) => {
@@ -638,7 +770,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
 
     // ── Render helpers ─────────────────────────────────────────────────────────
     const renderSessionBanner = () => (
-        <Reanimated.View style={[
+        <Animated.View style={[
             styles.sessionBanner,
             bannerStyle,
         ]}>
@@ -656,11 +788,14 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                             fill="none"
                             cx={23} cy={23} r={19}
                         />
-                        <ReanimatedCircle
+                        <AnimatedCircle
                             stroke="#39E29B"
                             strokeWidth={4}
                             strokeDasharray={`${2 * Math.PI * 19} ${2 * Math.PI * 19}`}
-                            animatedProps={miniRingProps}
+                            strokeDashoffset={progressAnim.interpolate({
+                                inputRange: [0, 100],
+                                outputRange: [2 * Math.PI * 19, 0],
+                            })}
                             strokeLinecap="round"
                             fill="none"
                             cx={23} cy={23} r={19}
@@ -684,7 +819,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                     </Text>
                     <View style={styles.sessionBannerStats}>
                         <View style={styles.sessionBannerStat}>
-                            <Zap size={11} color="#39E29B" />
+                            <Zap size={11} color="#ffffffff" />
                             <Text style={styles.sessionBannerStatText}>{energyUsed.toFixed(2)} kWh</Text>
                         </View>
                         <View style={styles.sessionBannerDivider} />
@@ -697,7 +832,7 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                     <ChevronRight size={16} color="#888" />
                 </View>
             </TouchableOpacity>
-        </Reanimated.View>
+        </Animated.View>
     );
 
     const renderSessionTab = () => (
@@ -733,11 +868,14 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                             r={RADIUS}
                         />
                         {/* Progress arc */}
-                        <ReanimatedCircle
+                        <AnimatedCircle
                             stroke="url(#arcGrad)"
                             strokeWidth={STROKE}
                             strokeDasharray={`${CIRCUMFERENCE} ${CIRCUMFERENCE}`}
-                            animatedProps={mainRingProps}
+                            strokeDashoffset={progressAnim.interpolate({
+                                inputRange: [0, 100],
+                                outputRange: [CIRCUMFERENCE, 0],
+                            })}
                             strokeLinecap="round"
                             fill="none"
                             cx={CIRCLE_SIZE / 2}
@@ -749,13 +887,27 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                     </Svg>
                     {/* Centre content */}
                     <View style={styles.circleInner}>
-                        <Reanimated.View style={pulseStyle}>
-                            <Zap size={14} color="#39E29B" fill="#39E29B" />
-                        </Reanimated.View>
+                        <Animated.View style={pulseStyle}>
+                            <Zap size={14} color={sessionState === SESSION_STATES.CHARGING ? "#39E29B" : "#888"} fill={sessionState === SESSION_STATES.CHARGING ? "#39E29B" : "#888"} />
+                        </Animated.View>
                         <Text style={styles.pctText}>{currentPct}<Text style={styles.pctUnit}>%</Text></Text>
-                        <View style={styles.statusPill}>
-                            <View style={styles.activeDot} />
-                            <Text style={styles.statusPillText}>LIVE</Text>
+                        <View style={[
+                            styles.statusPill, 
+                            { 
+                                borderColor: sessionState === SESSION_STATES.CHARGING ? '#39E29B' : '#888',
+                                backgroundColor: sessionState === SESSION_STATES.CHARGING ? 'rgba(57,226,155,0.1)' : 'rgba(136,136,136,0.1)'
+                            }
+                        ]}>
+                            <View style={[
+                                styles.activeDot, 
+                                { backgroundColor: sessionState === SESSION_STATES.CHARGING ? '#39E29B' : '#888' }
+                            ]} />
+                            <Text style={[
+                                styles.statusPillText, 
+                                { color: sessionState === SESSION_STATES.CHARGING ? '#39E29B' : '#888' }
+                            ]}>
+                                LIVE
+                            </Text>
                         </View>
                     </View>
                 </View>
@@ -768,13 +920,13 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                     value={energyUsed.toFixed(2)}
                     unit="kWh"
                     subValue={`₹${session?.rate || '0.00'}/kWh`}
-                    color="#39E29B"
+                    color="#ffffffff"
                 />
                 <StatCard
                     label="Duration"
                     value={<TimerDisplay startTime={session?.startTime} />}
                     unit=""
-                    color="#42A5F5"
+                    color="#ffffffff"
                 />
             </View>
 
@@ -785,18 +937,12 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                         <MapPin size={16} color={C.primary} />
                         <Text style={styles.detailStationName} numberOfLines={1}>{session.stationName || 'Unknown Station'}</Text>
                         <View style={styles.connectorBadge}>
-                            <Text style={styles.connectorBadgeText}>{session.chargerType || 'Fast'}</Text>
+                            <Text style={styles.connectorBadgeText}>
+                                {session.chargerType || 'Fast'} • {session.connectorType || 'CCS2'}
+                            </Text>
                         </View>
                     </View>
-                    <View style={styles.detailDivider} />
-                    <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Connector</Text>
-                        <Text style={styles.detailValue}>{session.connectorType || 'CCS2'}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Estimated Cost</Text>
-                        <Text style={[styles.detailValue, { color: C.primary, fontWeight: '800' }]}>₹{estimatedCost}</Text>
-                    </View>
+                    {/* Removed Connector and Estimated Cost rows per user request */}
                 </View>
             )}
 
@@ -930,18 +1076,18 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
             {/* Stats row */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
                 <View>
-                    <Text style={{ color: '#aaa', fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 }}>Energy</Text>
-                    <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }}>{energyUsed.toFixed(2)} <Text style={{ fontSize: 14, color: '#888', fontWeight: '600' }}>kWh</Text></Text>
+                    <Text style={{ color: '#aaa', fontSize: 13, fontFamily: 'Google Sans', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 }}>Energy</Text>
+                    <Text style={{ color: '#fff', fontSize: 24, fontFamily: 'Google Sans', fontWeight: '800', marginTop: 4 }}>{energyUsed.toFixed(2)} <Text style={{ fontSize: 14, color: '#888', fontWeight: '600' }}>kWh</Text></Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ color: '#aaa', fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 }}>Duration</Text>
-                    <TimerDisplay startTime={session?.startTime} style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }} />
+                    <Text style={{ color: '#aaa', fontSize: 13, fontFamily: 'Google Sans', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 }}>Duration</Text>
+                    <TimerDisplay startTime={session?.startTime} style={{ color: '#fff', fontSize: 24, fontFamily: 'Google Sans', fontWeight: '800', marginTop: 4 }} />
                 </View>
             </View>
 
             {/* Linear Progress bar */}
             <View style={{ height: 8, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 4, marginBottom: 8, overflow: 'hidden' }}>
-                <Reanimated.View
+                <Animated.View
                     style={[{
                         height: '100%',
                         backgroundColor: '#39E29B',
@@ -1091,17 +1237,33 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                             <ChevronRight size={22} color="#fff" />
                         </TouchableOpacity> */}
                             <View style={{ flex: 1, alignItems: 'flex-start', marginLeft: 12 }}>
-                                <Text style={styles.headerTitle}>Charging In Progress</Text>
+                                <Text style={styles.headerTitle}>
+                                    {sessionState === SESSION_STATES.PREPARING ? 'Preparing Session' : 
+                                     sessionState === SESSION_STATES.STOPPING ? 'Stopping Session' : 
+                                     'Charging In Progress'}
+                                </Text>
                                 <View style={styles.connectedPill}>
-                                    <View style={styles.connectedDot} />
-                                    <Text style={styles.connectedText}>Connected</Text>
+                                    <View style={[styles.connectedDot, (sessionState === SESSION_STATES.PREPARING || sessionState === SESSION_STATES.STOPPING) && { backgroundColor: '#FFD740' }]} />
+                                    <Text style={[styles.connectedText, (sessionState === SESSION_STATES.PREPARING || sessionState === SESSION_STATES.STOPPING) && { color: '#FFD740' }]}>
+                                        {sessionState === SESSION_STATES.PREPARING ? `Initializing${dots}` : 
+                                         sessionState === SESSION_STATES.STOPPING ? `Stopping${dots}` : 
+                                         'Connected'}
+                                    </Text>
                                 </View>
                             </View>
 
                             <View style={{ position: 'relative', width: 38, height: 38 }}>
                                 <Animated.View style={{ position: 'absolute', inset: 0, opacity: refreshOpacity }}>
-                                    <TouchableOpacity style={styles.iconBtn}>
-                                        <RefreshCw size={18} color="#aaa" />
+                                    <TouchableOpacity 
+                                        style={styles.iconBtn} 
+                                        onPress={fetchSession}
+                                        disabled={sessionState === SESSION_STATES.PREPARING || sessionState === SESSION_STATES.STOPPING}
+                                    >
+                                        {(sessionState === SESSION_STATES.PREPARING || sessionState === SESSION_STATES.STOPPING) ? (
+                                            <ActivityIndicator size="small" color="#39E29B" />
+                                        ) : (
+                                            <RefreshCw size={18} color="#aaa" />
+                                        )}
                                     </TouchableOpacity>
                                 </Animated.View>
                                 <Animated.View style={{ position: 'absolute', inset: 0, opacity: minimizeOpacity }}>
@@ -1119,38 +1281,82 @@ export default function SessionScreen({ navigation, route, isOverlay = false }) 
                         </View>
 
                         {/* ── Content ── */}
-                        <Reanimated.View style={[styles.tabContent, { paddingHorizontal: 20 }, tabContentStyle]}>
+                        <Animated.View style={[styles.tabContent, { paddingHorizontal: 20 }, tabContentStyle]}>
                             {activeTab === 0 && renderSessionTab()}
                             {activeTab === 1 && renderExploreTab()}
                             {activeTab === 2 && renderContentTab()}
-                        </Reanimated.View>
+                        </Animated.View>
 
                         {/* ── Sticky Footer ── */}
                         <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
                             <TouchableOpacity
                                 style={styles.minimizeBtn}
                                 onPress={() => {
-                                    setIsMinimized(true);
-                                    Animated.spring(pan, { toValue: Math.max(0, sheetHeightRef.current - 120), useNativeDriver: false, bounciness: 6 }).start();
+                                    // setIsMinimized(true);
+                                    // Animated.spring(pan, { toValue: Math.max(0, sheetHeightRef.current - 120), useNativeDriver: false, bounciness: 6 }).start();
+                                    // Redirect to Home instead of minimizing in place
+                                    navigation.navigate('Home');
                                 }}
                             >
                                 <ChevronDown size={20} color="#888" />
                                 <Text style={styles.minimizeTxt}>Minimize</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={[styles.stopBtn, { flex: 1 }]}
-                                onPress={async () => {
-                                    if (session?.sessionId) {
-                                        try {
-                                            await sessionApi.stopSession(session.sessionId);
-                                            navigation.navigate('Home');
-                                        } catch (e) {
-                                            console.log("Stop fail:", e);
-                                        }
+                                style={[styles.stopBtn, { flex: 1 }, sessionState === SESSION_STATES.STOPPING && { opacity: 0.7 }]}
+                                disabled={sessionState === SESSION_STATES.STOPPING}
+                                onPress={() => {
+                                    const sid = session?.sessionId || session?.id || route.params?.sessionId || route.params?.id;
+                                    
+                                    if (!sid) {
+                                        showAlert("Error", "No active session ID found to stop.");
+                                        return;
                                     }
+
+                                    showAlert(
+                                        "End Session",
+                                        "Are you sure you want to stop the charging session?",
+                                        [
+                                            { text: "Cancel", style: "cancel" },
+                                            {
+                                                text: "Stop",
+                                                style: "destructive",
+                                                onPress: async () => {
+                                                    try {
+                                                        setSessionState(SESSION_STATES.STOPPING);
+                                                        const result = await sessionApi.stopSession(sid);
+                                                        
+                                                        // Transition to Completed and navigate to Invoice
+                                                        setSessionState(SESSION_STATES.COMPLETED);
+                                                        
+                                                        navigation.replace('Invoice', {
+                                                            sessionData: result,
+                                                            sessionId: sid,
+                                                            finalEnergy: energyUsed,
+                                                            finalDuration: elapsedSeconds,
+                                                            stationName: session?.stationName,
+                                                            rate: session?.rate,
+                                                            chargerType: session?.chargerType,
+                                                            stationId: session?.stationId
+                                                        });
+                                                    } catch (e) {
+                                                        console.log("Stop fail:", e);
+                                                        setSessionState(SESSION_STATES.CHARGING);
+                                                        showAlert("Error", e.userMessage || "Failed to stop session. Please try again.");
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    );
                                 }}
                             >
-                                <Text style={styles.stopTxt}>End Session</Text>
+                                {sessionState === SESSION_STATES.STOPPING ? (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        <ActivityIndicator size="small" color="#fff" />
+                                        <Text style={styles.stopTxt}>Stopping...</Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.stopTxt}>End Session</Text>
+                                )}
                             </TouchableOpacity>
                         </View>
                     </>
@@ -1268,7 +1474,7 @@ function SectionHeader({ title, icon }) {
 
 function StatCard({ label, value, unit, color, subValue }) {
     return (
-        <View style={[sharedStyles.statCard, { borderTopColor: color, borderTopWidth: 2 }]}>
+        <View style={[sharedStyles.statCard, { borderTopColor: color, borderTopWidth: 3, borderRadius: 18 }]}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text style={sharedStyles.statLabel}>{label}</Text>
                 {subValue ? <Text style={{ fontSize: 10, color: '#888', fontWeight: 'bold' }}>{subValue}</Text> : null}
@@ -1450,10 +1656,11 @@ const C = {
 };
 
 const styles = StyleSheet.create({
+    
     rootWrapper: {
         flex: 1,
-        backgroundColor: '#151515', // Matte black
-        justifyContent: 'flex-end', // Aligns container to bottom
+        backgroundColor: '#151515',
+        justifyContent: 'flex-end',
     },
     googleCard: {
         backgroundColor: '#1E1E1E',
@@ -1463,7 +1670,6 @@ const styles = StyleSheet.create({
         borderColor: '#2A2A2A',
         gap: 8,
     },
-    // YouTube Modal Styles
     modalBackdrop: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.8)',
@@ -1491,12 +1697,12 @@ const styles = StyleSheet.create({
     modalTitle: {
         color: '#fff',
         fontSize: 18,
-        fontWeight: '800',
+        fontFamily: 'Google Sans',
     },
     modalSubtitle: {
         color: '#888',
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Google Sans',
         marginTop: 2,
     },
     closeBtn: {
@@ -1530,13 +1736,13 @@ const styles = StyleSheet.create({
     modalVideoTitle: {
         color: '#fff',
         fontSize: 13,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
         lineHeight: 18,
     },
     modalVideoChannel: {
         color: '#39E29B',
         fontSize: 11,
-        fontWeight: '600',
+        fontFamily: 'Google Sans',
     },
     playNowBtn: {
         alignSelf: 'flex-start',
@@ -1552,9 +1758,8 @@ const styles = StyleSheet.create({
     playNowText: {
         color: '#000',
         fontSize: 10,
-        fontWeight: '900',
+        fontFamily: 'Google Sans',
     },
-    // Calendar Specific Modal Items
     modalEventCard: {
         flexDirection: 'row',
         backgroundColor: '#181818',
@@ -1579,12 +1784,12 @@ const styles = StyleSheet.create({
     eventDay: {
         color: '#4285F4',
         fontSize: 18,
-        fontWeight: '900',
+        fontFamily: 'Google Sans',
     },
     eventMon: {
         color: '#4285F4',
         fontSize: 9,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
         marginTop: -3,
     },
     modalEventInfo: {
@@ -1601,26 +1806,23 @@ const styles = StyleSheet.create({
     googleCardTitle: {
         color: '#E0E0E0',
         fontSize: 16,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
     },
     googleCardSub: {
         color: '#888',
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Google Sans',
     },
     container: {
         backgroundColor: C.bg,
         maxHeight: '95%',
         width: '100%',
     },
-
     bgGrid: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'transparent',
         opacity: 0.03,
     },
-
-    // Drag Bar
     dragBarContainer: {
         width: '100%',
         paddingBottom: 10,
@@ -1634,8 +1836,6 @@ const styles = StyleSheet.create({
         borderRadius: 3,
         backgroundColor: '#444',
     },
-
-    // Header
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1657,7 +1857,8 @@ const styles = StyleSheet.create({
     headerTitle: {
         color: C.text,
         fontSize: 15,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
+        fontWeight: '600',
         letterSpacing: 0.3,
     },
     connectedPill: {
@@ -1675,10 +1876,8 @@ const styles = StyleSheet.create({
     connectedText: {
         color: C.primary,
         fontSize: 11,
-        fontWeight: '600',
+        fontFamily: 'Google Sans',
     },
-
-    // Session banner (in Explore tab)
     sessionBanner: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1706,7 +1905,7 @@ const styles = StyleSheet.create({
     sessionBannerPct: {
         color: C.primary,
         fontSize: 10,
-        fontWeight: '800',
+        fontFamily: 'Google Sans',
         letterSpacing: -0.3,
     },
     sessionBannerInfo: {
@@ -1727,13 +1926,13 @@ const styles = StyleSheet.create({
     sessionBannerLabel: {
         color: C.primary,
         fontSize: 11,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
         letterSpacing: 0.3,
     },
     sessionBannerStation: {
         color: C.textSub,
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Google Sans',
     },
     sessionBannerStats: {
         flexDirection: 'row',
@@ -1749,7 +1948,8 @@ const styles = StyleSheet.create({
     sessionBannerStatText: {
         color: '#888',
         fontSize: 11,
-        fontWeight: '600',
+        fontFamily: 'Google Sans',
+        fontWeight: '800',
     },
     sessionBannerDivider: {
         width: 1,
@@ -1767,8 +1967,6 @@ const styles = StyleSheet.create({
         borderColor: C.border,
         flexShrink: 0,
     },
-
-    // Tab bar
     tabBarOuter: {
         paddingTop: 14,
         paddingBottom: 4,
@@ -1802,7 +2000,7 @@ const styles = StyleSheet.create({
     tabText: {
         color: C.textMuted,
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Google Sans',
     },
     tabTextActive: {
         color: C.text,
@@ -1814,21 +2012,17 @@ const styles = StyleSheet.create({
         backgroundColor: C.primary,
         marginTop: -6,
     },
-
-    // Content area
     tabContent: {
         flexShrink: 1,
         paddingTop: 16,
     },
-
-    // Session tab — circle
     circleWrapper: {
         height: 240,
         borderRadius: 24,
         overflow: 'hidden',
         position: 'relative',
         marginBottom: 16,
-        marginTop: 4,
+        marginTop: -18,
         backgroundColor: '#111111e1',
     },
     circleImage: {
@@ -1870,13 +2064,13 @@ const styles = StyleSheet.create({
     pctText: {
         color: C.text,
         fontSize: 32,
-        fontWeight: '800',
+        fontFamily: 'Google Sans',
         letterSpacing: -1,
     },
     pctUnit: {
         fontSize: 14,
         color: C.textSub,
-        fontWeight: '400',
+        fontFamily: 'Google Sans',
     },
     statusPill: {
         flexDirection: 'row',
@@ -1898,10 +2092,9 @@ const styles = StyleSheet.create({
     statusPillText: {
         color: C.primary,
         fontSize: 9,
-        fontWeight: '800',
+        fontFamily: 'Google Sans',
         letterSpacing: 1.5,
     },
-
     stationRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1914,15 +2107,13 @@ const styles = StyleSheet.create({
         fontSize: 12,
         flex: 1,
         textAlign: 'left',
+        fontFamily: 'Google Sans',
     },
-
     statsGrid: {
         flexDirection: 'row',
         gap: 10,
         marginBottom: 14,
     },
-
-    // Session detail card
     detailCard: {
         backgroundColor: C.surface,
         borderRadius: 18,
@@ -1940,7 +2131,7 @@ const styles = StyleSheet.create({
     detailStationName: {
         color: C.text,
         fontSize: 15,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
         flex: 1,
     },
     detailDivider: {
@@ -1962,10 +2153,8 @@ const styles = StyleSheet.create({
     detailExploreText: {
         color: C.primary,
         fontSize: 13,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
     },
-
-    // Trending Card
     trendingCard: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1983,15 +2172,14 @@ const styles = StyleSheet.create({
     trendingTitle: {
         color: '#FFF',
         fontSize: 15,
-        fontWeight: '800',
+        fontFamily: 'Google Sans',
         letterSpacing: -0.3,
     },
     trendingSub: {
         color: '#888',
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: 'Google Sans',
     },
-
     detailRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -2000,11 +2188,12 @@ const styles = StyleSheet.create({
     detailLabel: {
         color: C.textMuted,
         fontSize: 13,
+        fontFamily: 'Google Sans',
     },
     detailValue: {
         color: C.text,
         fontSize: 13,
-        fontWeight: '600',
+        fontFamily: 'Google Sans',
     },
     progressBarBg: {
         height: 6,
@@ -2029,10 +2218,8 @@ const styles = StyleSheet.create({
     connectorBadgeText: {
         color: C.primary,
         fontSize: 11,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
     },
-
-    // Weather
     weatherCard: {
         backgroundColor: C.surface,
         borderRadius: 18,
@@ -2072,10 +2259,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 6,
     },
-    weatherTemp: { color: C.text, fontSize: 36, fontWeight: '800', letterSpacing: -1 },
-    weatherTempSm: { color: C.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
-    weatherCond: { color: C.textSub, fontSize: 14, marginTop: 2 },
-    weatherFeels: { color: C.textMuted, fontSize: 12, marginTop: 1 },
+    weatherTemp: { color: C.text, fontSize: 36, fontFamily: 'Google Sans', letterSpacing: -1 },
+    weatherTempSm: { color: C.text, fontSize: 26, fontFamily: 'Google Sans', letterSpacing: -0.5 },
+    weatherCond: { color: C.textSub, fontSize: 14, marginTop: 2, fontFamily: 'Google Sans' },
+    weatherFeels: { color: C.textMuted, fontSize: 12, marginTop: 1, fontFamily: 'Google Sans' },
     weatherGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -2086,8 +2273,6 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.06)',
         marginVertical: 4,
     },
-
-    // AQI
     aqiCard: {
         backgroundColor: C.surface,
         borderRadius: 18,
@@ -2102,17 +2287,17 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
     },
-    aqiNumber: { color: C.text, fontSize: 40, fontWeight: '800', letterSpacing: -1 },
-    aqiLabel: { color: C.textMuted, fontSize: 12, marginTop: -4 },
+    aqiNumber: { color: C.text, fontSize: 40, fontFamily: 'Google Sans', letterSpacing: -1 },
+    aqiLabel: { color: C.textMuted, fontSize: 12, marginTop: -4, fontFamily: 'Google Sans' },
     aqiBadge: {
         paddingHorizontal: 14,
         paddingVertical: 6,
         borderRadius: 20,
         borderWidth: 1,
     },
-    aqiBadgeText: { fontSize: 13, fontWeight: '700' },
-    aqiPollutant: { color: C.textMuted, fontSize: 11 },
-    aqiPollutantVal: { fontSize: 14, fontWeight: '700', marginTop: 2 },
+    aqiBadgeText: { fontSize: 13, fontFamily: 'Google Sans' },
+    aqiPollutant: { color: C.textMuted, fontSize: 11, fontFamily: 'Google Sans' },
+    aqiPollutantVal: { fontSize: 14, fontFamily: 'Google Sans', marginTop: 2 },
     aqiBarContainer: { gap: 6 },
     aqiBarTrack: {
         height: 8,
@@ -2125,10 +2310,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
     },
-    aqiBarLabel: { color: C.textMuted, fontSize: 9 },
+    aqiBarLabel: { color: C.textMuted, fontSize: 9, fontFamily: 'Google Sans' },
     pollutantsRow: { flexDirection: 'row', gap: 8 },
-
-    // Footer
     footer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -2150,7 +2333,7 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: C.border,
     },
-    minimizeTxt: { color: C.textSub, fontSize: 13, fontWeight: '600' },
+    minimizeTxt: { color: C.textSub, fontSize: 13, fontFamily: 'Google Sans' },
     stopBtn: {
         flex: 1,
         backgroundColor: '#FF4213',
@@ -2163,7 +2346,7 @@ const styles = StyleSheet.create({
         shadowRadius: 10,
         elevation: 6,
     },
-    stopTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+    stopTxt: { color: '#fff', fontSize: 15, fontFamily: 'Google Sans' },
 });
 
 // Shared styles for sub-components
@@ -2184,7 +2367,6 @@ const sharedStyles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    // Square Cafe Card (from StationDetailsScreen)
     cafeCard: {
         backgroundColor: '#2A2A2A',
         borderRadius: 16,
@@ -2195,7 +2377,7 @@ const sharedStyles = StyleSheet.create({
     },
     cafeImage: {
         width: 140,
-        height: 140, // 1:1 Aspect Ratio
+        height: 140,
         resizeMode: 'cover',
     },
     cafeImagePlaceholder: {
@@ -2212,23 +2394,21 @@ const sharedStyles = StyleSheet.create({
     cafeName: {
         color: '#fff',
         fontSize: 14,
-        fontWeight: '600',
+        fontFamily: 'Google Sans',
         marginBottom: 2,
     },
     cafeRating: {
         color: '#FFD700',
         fontSize: 12,
-        fontWeight: 'bold',
+        fontFamily: 'Google Sans',
     },
     sectionTitle: {
         color: '#888',
         fontSize: 11,
-        fontWeight: '700',
+        fontFamily: 'Google Sans',
         letterSpacing: 1.2,
         textTransform: 'uppercase',
     },
-
-    // Stat card
     statCard: {
         flex: 1,
         backgroundColor: C.surface,
@@ -2238,11 +2418,9 @@ const sharedStyles = StyleSheet.create({
         borderWidth: 1,
         borderColor: C.border,
     },
-    statLabel: { color: '#666', fontSize: 10, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-    statValue: { fontSize: 18, fontWeight: '800', letterSpacing: -0.5 },
-    statUnit: { color: '#555', fontSize: 10, fontWeight: '500' },
-
-    // Weather stat cell
+    statLabel: { color: '#666', fontSize: 10, fontFamily: 'Google Sans', textTransform: 'uppercase', letterSpacing: 0.5 },
+    statValue: { fontSize: 18, fontFamily: 'Google Sans', letterSpacing: -0.5 },
+    statUnit: { color: '#555', fontSize: 10, fontFamily: 'Google Sans' },
     weatherStat: {
         flex: 1,
         minWidth: '45%',
@@ -2253,10 +2431,8 @@ const sharedStyles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.05)',
     },
-    weatherStatLabel: { color: '#666', fontSize: 11 },
-    weatherStatValue: { color: '#E0E0E0', fontSize: 15, fontWeight: '700' },
-
-    // AQI pollutant chip
+    weatherStatLabel: { color: '#666', fontSize: 11, fontFamily: 'Google Sans' },
+    weatherStatValue: { color: '#E0E0E0', fontSize: 15, fontFamily: 'Google Sans' },
     pollutantChip: {
         flex: 1,
         backgroundColor: 'rgba(255,255,255,0.04)',
@@ -2267,11 +2443,9 @@ const sharedStyles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.06)',
     },
-    pollutantLabel: { color: '#666', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-    pollutantValue: { color: '#E0E0E0', fontSize: 14, fontWeight: '800' },
-    pollutantUnit: { color: '#555', fontSize: 9 },
-
-    // Place card
+    pollutantLabel: { color: '#666', fontSize: 10, fontFamily: 'Google Sans', textTransform: 'uppercase', letterSpacing: 0.5 },
+    pollutantValue: { color: '#E0E0E0', fontSize: 14, fontFamily: 'Google Sans' },
+    pollutantUnit: { color: '#555', fontSize: 9, fontFamily: 'Google Sans' },
     placeCard: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -2291,12 +2465,12 @@ const sharedStyles = StyleSheet.create({
         alignItems: 'center',
     },
     placeInfo: { flex: 1, gap: 4 },
-    placeName: { color: '#E0E0E0', fontSize: 14, fontWeight: '600' },
+    placeName: { color: '#E0E0E0', fontSize: 14, fontFamily: 'Google Sans' },
     placeMeta: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    placeType: { color: '#666', fontSize: 11 },
-    placeDot: { color: '#333', fontSize: 11 },
-    placeDist: { color: '#666', fontSize: 11 },
-    placeOpen: { fontSize: 11, fontWeight: '700' },
+    placeType: { color: '#666', fontSize: 11, fontFamily: 'Google Sans' },
+    placeDot: { color: '#333', fontSize: 11, fontFamily: 'Google Sans' },
+    placeDist: { color: '#666', fontSize: 11, fontFamily: 'Google Sans' },
+    placeOpen: { fontSize: 11, fontFamily: 'Google Sans' },
     placeRight: { alignItems: 'center', gap: 6 },
     ratingPill: {
         flexDirection: 'row',
@@ -2307,7 +2481,7 @@ const sharedStyles = StyleSheet.create({
         paddingVertical: 3,
         borderRadius: 8,
     },
-    ratingText: { color: '#FFD740', fontSize: 11, fontWeight: '700' },
+    ratingText: { color: '#FFD740', fontSize: 11, fontFamily: 'Google Sans' },
     directionsBtn: {
         width: 30,
         height: 30,
@@ -2318,8 +2492,6 @@ const sharedStyles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(57,226,155,0.18)',
     },
-
-    // Blog card
     blogCard: {
         flexDirection: 'row',
         backgroundColor: C.surface,
@@ -2337,18 +2509,16 @@ const sharedStyles = StyleSheet.create({
         paddingVertical: 2,
         borderRadius: 6,
     },
-    blogTagText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
-    blogTitle: { color: '#E0E0E0', fontSize: 13, fontWeight: '600', lineHeight: 18 },
+    blogTagText: { fontSize: 9, fontFamily: 'Google Sans', letterSpacing: 0.5 },
+    blogTitle: { color: '#E0E0E0', fontSize: 13, fontFamily: 'Google Sans', lineHeight: 18 },
     blogMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    blogSource: { color: '#666', fontSize: 10 },
-    blogDot: { color: '#444', fontSize: 10 },
-    blogRead: { color: '#555', fontSize: 10 },
+    blogSource: { color: '#666', fontSize: 10, fontFamily: 'Google Sans' },
+    blogDot: { color: '#444', fontSize: 10, fontFamily: 'Google Sans' },
+    blogRead: { color: '#555', fontSize: 10, fontFamily: 'Google Sans' },
     openBtn: {
         padding: 12,
         justifyContent: 'flex-start',
     },
-
-    // Video card
     videoCard: {
         flexDirection: 'row',
         backgroundColor: C.surface,
@@ -2384,14 +2554,14 @@ const sharedStyles = StyleSheet.create({
         paddingVertical: 2,
         borderRadius: 4,
     },
-    durationText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+    durationText: { color: '#fff', fontSize: 10, fontFamily: 'Google Sans' },
     videoInfo: {
         flex: 1,
         padding: 12,
         gap: 4,
         justifyContent: 'center',
     },
-    videoTitle: { color: '#E0E0E0', fontSize: 12, fontWeight: '600', lineHeight: 17 },
-    videoChannel: { color: '#39E29B', fontSize: 11, fontWeight: '600', marginTop: 2 },
-    videoViews: { color: '#555', fontSize: 10 },
+    videoTitle: { color: '#E0E0E0', fontSize: 12, fontFamily: 'Google Sans', lineHeight: 17 },
+    videoChannel: { color: '#39E29B', fontSize: 11, fontFamily: 'Google Sans', marginTop: 2 },
+    videoViews: { color: '#555', fontSize: 10, fontFamily: 'Google Sans' },
 });

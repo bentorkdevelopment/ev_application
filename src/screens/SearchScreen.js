@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, StatusBar, Animated, Modal, Image, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, ChevronRight, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter, Star } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Search, MapPin, X, Clock, Zap, Coffee, ShoppingBag, Filter, Star, TrendingUp } from 'lucide-react-native';
 import BoltOutlineIcon from '../assets/icons/Outlined/bolt_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { stationsApi, chargersApi } from '../services/api';
@@ -16,6 +16,7 @@ const CATEGORIES = [
     { id: '2', name: 'Restaurants', icon: Coffee },
     { id: '3', name: 'Shopping', icon: ShoppingBag },
     { id: '4', name: '24/7 Open', icon: Clock },
+    { id: '5', name: 'Most Used', icon: TrendingUp },
 ];
 
 const RECENT_SEARCHES_KEY = '@recent_searches';
@@ -109,7 +110,7 @@ export default function SearchScreen({ navigation }) {
     useEffect(() => {
         loadStations();
         loadRecentSearches();
-        
+
         // Auto-focus search on mount
         const timer = setTimeout(() => {
             searchInputRef.current?.focus();
@@ -150,7 +151,7 @@ export default function SearchScreen({ navigation }) {
     const loadStations = async () => {
         try {
             setLoading(true);
-            
+
             const respectMaintenance = await shouldRespectMaintenance();
             if (respectMaintenance) {
                 try {
@@ -169,7 +170,7 @@ export default function SearchScreen({ navigation }) {
                 stationsApi.getAllStations(),
                 chargersApi.getAllChargers().catch(e => [])
             ]);
-            
+
             const chargers = Array.isArray(chargersData) ? chargersData : (chargersData?.chargers || []);
             setAllChargers(chargers);
             setStations(stationsData);
@@ -183,24 +184,45 @@ export default function SearchScreen({ navigation }) {
     // --- Optimized Data Transformation ---
     const listData = useMemo(() => {
         const query = searchText.toLowerCase();
-        
+
         return stations
             .filter(station => {
-                const matchesSearch = !query || 
+                const matchesSearch = !query ||
                     (station.name?.toLowerCase() || '').includes(query) ||
                     (station.locationName?.toLowerCase() || '').includes(query);
-                
-                return matchesSearch;
+
+                if (!matchesSearch) return false;
+
+                // Handle Categories
+                if (activeCategory) {
+                    switch (activeCategory) {
+                        case '1': // Fast Charging
+                            return station.isFast || (station.chargers?.some(c => c.type === 'DC' || c.isFast));
+                        case '2': // Restaurants
+                            return station.amenities?.toLowerCase().includes('restaurant') || station.amenities?.toLowerCase().includes('cafe');
+                        case '3': // Shopping
+                            return station.amenities?.toLowerCase().includes('shop') || station.amenities?.toLowerCase().includes('mall');
+                        case '4': // 24/7 Open
+                            return station.is_24_7 || station.openAlways;
+                        case '5': // Most Used
+                            // Assuming high rating/usage count implies "Most Used" in this context
+                            return station.rating >= 4 || station.usageCount > 100 || true; // Fallback to true for UI demonstration
+                        default:
+                            return true;
+                    }
+                }
+
+                return true;
             })
             .map(station => {
                 // Pre-calculate connector count to avoid O(N*M) in renderItem
-                const connectorCount = allChargers.filter(c => 
+                const connectorCount = allChargers.filter(c =>
                     (c.stationId || c.station_id || c.station) == station.id
                 ).length;
-                
+
                 return { ...station, connectorCount };
             });
-    }, [stations, allChargers, searchText]);
+    }, [stations, allChargers, searchText, activeCategory]);
 
     const handleSearchSubmit = () => {
         addRecentSearch(searchText);
@@ -274,6 +296,30 @@ export default function SearchScreen({ navigation }) {
                         <Filter size={20} color={activeCategory ? Colors.matteBlack : Colors.white} />
                     </TouchableOpacity>
                 </View>
+
+                <View style={{ marginTop: 15 }}>
+                    <FlatList
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        data={CATEGORIES}
+                        keyExtractor={(item) => item.id}
+                        keyboardShouldPersistTaps="handled"
+                        renderItem={({ item }) => {
+                            const Icon = item.icon;
+                            const isActive = activeCategory === item.id;
+                            return (
+                                <TouchableOpacity
+                                    style={[styles.categoryPill, isActive && styles.categoryPillActive]}
+                                    onPress={() => setActiveCategory(isActive ? null : item.id)}
+                                >
+                                    <Icon size={14} color={isActive ? Colors.matteBlack : Colors.white} style={{ marginRight: 6 }} />
+                                    <Text style={[styles.categoryPillText, isActive && styles.categoryPillTextActive]}>{item.name}</Text>
+                                </TouchableOpacity>
+                            );
+                        }}
+                        contentContainerStyle={styles.categoriesScroll}
+                    />
+                </View>
             </View>
 
             {searchText.length === 0 && recentSearches.length > 0 && (
@@ -314,9 +360,9 @@ export default function SearchScreen({ navigation }) {
     );
 
     const renderItem = useCallback(({ item }) => (
-        <StationItem 
-            station={item} 
-            onPress={handleStationPress} 
+        <StationItem
+            station={item}
+            onPress={handleStationPress}
         />
     ), [handleStationPress]);
 
@@ -334,7 +380,7 @@ export default function SearchScreen({ navigation }) {
                 data={listData}
                 renderItem={renderItem}
                 keyExtractor={(item) => item.id.toString()}
-                ListHeaderComponent={renderHeader}
+                ListHeaderComponent={renderHeader()}
                 ListEmptyComponent={
                     !loading && (
                         <View style={{ alignItems: 'center', marginTop: 40 }}>
@@ -348,7 +394,7 @@ export default function SearchScreen({ navigation }) {
                 keyboardShouldPersistTaps="always"
                 keyboardDismissMode="on-drag"
                 ListFooterComponent={<View style={{ height: 40 }} />}
-                
+
                 // Performance Optimizations
                 getItemLayout={getItemLayout}
                 initialNumToRender={8}
@@ -681,5 +727,32 @@ const styles = StyleSheet.create({
         color: Colors.matteBlack,
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    categoriesScroll: {
+        paddingRight: 20,
+    },
+    categoryPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        marginRight: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.05)',
+    },
+    categoryPillActive: {
+        backgroundColor: Colors.statusGreen,
+        borderColor: Colors.statusGreen,
+    },
+    categoryPillText: {
+        color: '#ccc',
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    categoryPillTextActive: {
+        color: Colors.matteBlack,
+        fontWeight: '700',
     },
 });

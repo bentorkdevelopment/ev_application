@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Switch, findNodeHandle } from 'react-native';
-import Animated, { useSharedValue, withTiming, useAnimatedStyle } from 'react-native-reanimated';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Switch, findNodeHandle, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, ChevronLeft, Search, UserPlus, KeyRound, Smartphone, Layout, Code, Bell, Navigation, Car, TrendingUp, MapPin, Zap, FlaskConical, Shield, X } from 'lucide-react-native';
 import { useAlert } from '../context/AlertContext';
@@ -45,40 +44,31 @@ export default function DeveloperScreen({ navigation }) {
         );
     };
 
-
     const handleTestNotification = async () => {
         try {
-            // Request permissions (required for iOS)
             await notifee.requestPermission();
-
-            // Create a channel (required for Android)
             const channelId = await notifee.createChannel({
                 id: 'test-channel',
                 name: 'Test Channel',
                 importance: AndroidImportance.HIGH,
             });
 
-            // Display a notification
             await notifee.displayNotification({
                 title: 'Test Notification',
                 body: 'This is a test notification from Developer Options 🚀',
                 android: {
                     channelId,
-                    smallIcon: 'ic_launcher', // verify if this resource exists, fallback if needed
+                    smallIcon: 'ic_launcher',
                     pressAction: {
                         id: 'default',
                     },
                 },
             });
-
-            // Optional: Feedback toast/alert
-            // showAlert("Success", "Notification dispatched!");
         } catch (error) {
             console.error("Notification failed", error);
             showAlert("Error", "Failed to trigger notification: " + error.message);
         }
     };
-
 
     return (
         <View style={styles.container}>
@@ -213,12 +203,12 @@ export default function DeveloperScreen({ navigation }) {
                     />
 
                     {/* Shared Transition Demo Square */}
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         style={styles.transitionDemoContainer}
                         onPress={() => {
                             if (demoSquareRef.current) {
                                 demoSquareRef.current.measureInWindow((x, y, width, height) => {
-                                    navigation.navigate('Test', { 
+                                    navigation.navigate('Test', {
                                         isSharedDemo: true,
                                         sourceLayout: { x, y, width, height }
                                     });
@@ -226,7 +216,7 @@ export default function DeveloperScreen({ navigation }) {
                             }
                         }}
                     >
-                        <Animated.View 
+                        <Animated.View
                             ref={demoSquareRef}
                             style={styles.demoSquare}
                         />

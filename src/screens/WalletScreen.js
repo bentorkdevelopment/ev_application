@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar, Alert, Animated, Easing, Share } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList, Image, Dimensions, Platform, StatusBar, Animated, Easing, Share } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ArrowDown, ArrowUp, X, Wallet as WalletIcon, Gift, Copy, Share2 } from 'lucide-react-native';
 import { authService } from '../services/auth';
@@ -11,6 +11,7 @@ import ReactNativeBiometrics, { BiometryTypes } from 'react-native-biometrics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import PinPromptModal from '../components/PinPromptModal';
 import { Colors } from '../styles/GlobalStyles';
+import { useAlert } from '../context/AlertContext';
 import remoteConfig from '@react-native-firebase/remote-config';
 import { shouldRespectMaintenance } from '../utils/devSettings';
 import WarningIcon from '../assets/icons/Rounded Fill/warning_24dp_E3E3E3_FILL1_wght400_GRAD0_opsz24.svg';
@@ -21,6 +22,7 @@ const { width } = Dimensions.get('window');
 const MOCK_TRANSACTIONS = [];
 
 export default function WalletScreen({ navigation }) {
+    const { showAlert } = useAlert();
     const insets = useSafeAreaInsets();
     const [user, setUser] = useState(null);
     const [transactions, setTransactions] = useState([]);
@@ -209,7 +211,7 @@ export default function WalletScreen({ navigation }) {
 
         if (!userId) {
             console.error("Payment failed: Missing User ID. User object:", user);
-            Alert.alert("Session Error", "Could not identify user. Please wait a moment or try logging in again.");
+            showAlert("Session Error", "Could not identify user. Please wait a moment or try logging in again.");
             return;
         }
 
@@ -255,7 +257,7 @@ export default function WalletScreen({ navigation }) {
 
                     console.log("Verification Success:", verificationResponse);
 
-                    Alert.alert("Success", "Wallet updated successfully!");
+                    showAlert("Success", "Wallet updated successfully!");
 
                     // 3. Update UI
                     setShowAddModal(false);
@@ -271,20 +273,20 @@ export default function WalletScreen({ navigation }) {
 
                 } catch (verifyErr) {
                     console.error("Verification Failed:", verifyErr);
-                    Alert.alert("Payment Verification Failed", "Payment was successful but verification failed. Please contact support.");
+                    showAlert("Payment Verification Failed", "Payment was successful but verification failed. Please contact support.");
                 }
 
             }).catch((error) => {
                 // handle failure
                 console.log(`Razorpay Error: ${error.code} | ${error.description}`);
                 if (error.code !== 0) {
-                    Alert.alert("Payment Failed", error.description);
+                    showAlert("Payment Failed", error.description);
                 }
             });
 
         } catch (err) {
             console.error("Order Creation Failed:", err);
-            Alert.alert("Error", "Failed to initiate payment. Please try again.");
+            showAlert("Error", "Failed to initiate payment. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -303,11 +305,11 @@ export default function WalletScreen({ navigation }) {
 
     const handleRedeemReferral = () => {
         if (referralCodeInput === '0000' || referralCodeInput === '#0000') {
-            Alert.alert("Success", "Referral code applied successfully! You've earned rewards.");
+            showAlert("Success", "Referral code applied successfully! You've earned rewards.");
             setShowReferralModal(false);
             setReferralCodeInput('');
         } else {
-            Alert.alert("Invalid Code", "Please enter a valid referral code.");
+            showAlert("Invalid Code", "Please enter a valid referral code.");
         }
     };
 
