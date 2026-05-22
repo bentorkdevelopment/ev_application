@@ -3,10 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Platform, KeyboardAvoidingView, ScrollView, ActivityIndicator, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Mail, Lock, User, Eye, EyeOff, Phone, AlertCircle } from 'lucide-react-native';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
-import { GOOGLE_WEB_CLIENT_ID } from '@env';
 import { authApi } from '../services/api';
 import { useAlert } from '../context/AlertContext';
+import { authService } from '../services/auth';
 
 export default function RegisterScreen({ navigation }) {
     const insets = useSafeAreaInsets();
@@ -22,14 +21,6 @@ export default function RegisterScreen({ navigation }) {
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
-
-    useEffect(() => {
-        GoogleSignin.configure({
-            webClientId: GOOGLE_WEB_CLIENT_ID,
-            offlineAccess: true,
-            scopes: ['email', 'profile'],
-        });
-    }, []);
 
     const handleRegister = async () => {
         setErrorMessage('');
@@ -107,17 +98,32 @@ export default function RegisterScreen({ navigation }) {
                     mobile: response.mobile || trimmedMobile
                 };
                 await authService.setUser(userData);
-            }
 
-            // Check T&C and Navigate
-            const tcAccepted = await authService.hasAcceptedTerms();
-            if (!tcAccepted) {
-                navigation.reset({
-                    index: 0,
-                    routes: [{ name: 'TermsConsent', params: { nextScreen: 'Home' } }]
-                });
+                // Check T&C and Navigate
+                const tcAccepted = await authService.hasAcceptedTerms();
+                if (!tcAccepted) {
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'TermsConsent', params: { nextScreen: 'Home' } }]
+                    });
+                } else {
+                    navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+                }
             } else {
-                navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+                // If no token, prompt the user to login manually
+                showAlert(
+                    "Registration Successful",
+                    "Your account has been created successfully. Please login to continue.",
+                    [{
+                        text: "Login Now",
+                        onPress: () => {
+                            navigation.reset({
+                                index: 0,
+                                routes: [{ name: 'Login' }]
+                            });
+                        }
+                    }]
+                );
             }
 
         } catch (error) {
@@ -138,40 +144,7 @@ export default function RegisterScreen({ navigation }) {
         }
     };
 
-    const handleGoogleRegister = async () => {
-        try {
-            await GoogleSignin.hasPlayServices();
-            const userInfo = await GoogleSignin.signIn();
 
-            console.log("Google Sign In Raw Response:", JSON.stringify(userInfo));
-
-            // Robust user extraction for different library versions
-            const user = userInfo.data?.user || userInfo.user || userInfo;
-
-            if (user && user.email) {
-                // Navigate to OTP Screen for Mobile Verification
-                navigation.navigate('OtpLogin', {
-                    googleUser: {
-                        name: user.name,
-                        email: user.email,
-                        photo: user.photo
-                    }
-                });
-            } else {
-                console.warn("Could not extract user details.", userInfo);
-                showAlert("Error", "Could not get user details from Google.");
-            }
-        } catch (error) {
-            console.error("Google Sign Up Error:", error);
-            if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-                // User cancelled, do nothing or show toast
-            } else if (error.code === statusCodes.IN_PROGRESS) {
-                // Operation in progress
-            } else {
-                showAlert("Sign In Failed", error.message || "Could not sign in with Google.");
-            }
-        }
-    };
 
     return (
         <KeyboardAvoidingView
@@ -182,6 +155,7 @@ export default function RegisterScreen({ navigation }) {
             <ScrollView
                 contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20 }]}
                 showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
             >
                 {/* Header / Logo Area */}
                 <View style={styles.headerContainer}>
@@ -292,20 +266,7 @@ export default function RegisterScreen({ navigation }) {
                         )}
                     </TouchableOpacity>
 
-                    <View style={styles.dividerContainer}>
-                        <View style={styles.dividerLine} />
-                        <Text style={styles.dividerText}>OR</Text>
-                        <View style={styles.dividerLine} />
-                    </View>
 
-                    {/* Google Button */}
-                    <TouchableOpacity style={styles.googleBtn} onPress={handleGoogleRegister}>
-                        <Image
-                            source={require('../assets/images/google_ic.webp')}
-                            style={styles.googleIcon}
-                        />
-                        <Text style={styles.googleBtnText}>Continue with Google</Text>
-                    </TouchableOpacity>
 
                     {/* Login Link */}
                     <View style={styles.loginLinkContainer}>
@@ -408,40 +369,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
     },
-    dividerContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 24,
-    },
-    dividerLine: {
-        flex: 1,
-        height: 1,
-        backgroundColor: '#333',
-    },
-    dividerText: {
-        color: '#666',
-        paddingHorizontal: 16,
-        fontSize: 14,
-    },
-    googleBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#fff',
-        height: 56,
-        borderRadius: 16,
-        marginBottom: 32,
-    },
-    googleIcon: {
-        width: 24,
-        height: 24,
-        marginRight: 12,
-    },
-    googleBtnText: {
-        color: '#000',
-        fontSize: 16,
-        fontWeight: '600',
-    },
+
     loginLinkContainer: {
         flexDirection: 'row',
         justifyContent: 'center',

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView, StatusBar, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Bell, ShieldCheck, ChevronRight, Lock, User, Smartphone } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAlert } from '../context/AlertContext';
 import PinPromptModal from '../components/PinPromptModal';
 import ReactNativeBiometrics from 'react-native-biometrics';
 
 export default function SettingsScreen({ navigation }) {
+    const { showAlert } = useAlert();
     const insets = useSafeAreaInsets();
 
     // Settings States
@@ -48,7 +50,7 @@ export default function SettingsScreen({ navigation }) {
                         // Failed or cancelled? fallback to PIN if not cancelled
                         // But simplePrompt handles cancellation internally usually by returning success:false
                         // We can offer PIN if they prefer
-                        Alert.alert("Authentication Failed", "Would you like to use PIN instead?", [
+                        showAlert("Authentication Failed", "Would you like to use PIN instead?", [
                             { text: "No", style: "cancel" },
                             { text: "Use PIN", onPress: () => setShowPinVerifyModal(true) }
                         ]);
@@ -67,7 +69,7 @@ export default function SettingsScreen({ navigation }) {
     const disableSecurity = async () => {
         setSecureWallet(false);
         await AsyncStorage.setItem('secureWallet', 'false');
-        Alert.alert("Security Disabled", "Wallet security has been turned off.");
+        showAlert("Security Disabled", "Wallet security has been turned off.");
     };
 
     const handlePinVerifySuccess = () => {
@@ -78,7 +80,7 @@ export default function SettingsScreen({ navigation }) {
     const handlePinSetSuccess = () => {
         setSecureWallet(true);
         setShowPinModal(false);
-        Alert.alert("Success", "Wallet Security Enabled. You can use PIN or Biometrics (if available) to access your wallet.");
+        showAlert("Success", "Wallet Security Enabled. You can use PIN or Biometrics (if available) to access your wallet.");
     };
 
     const SettingItem = ({ icon: Icon, title, type = 'arrow', value, onValueChange, onPress }) => (
@@ -139,7 +141,7 @@ export default function SettingsScreen({ navigation }) {
                     <SettingItem
                         icon={Smartphone}
                         title="Device Preferences"
-                        onPress={() => Alert.alert("Preferences", "Theme: Dark Mode (Default)\nLanguage: English")}
+                        onPress={() => showAlert("Preferences", "Theme: Dark Mode (Default)\nLanguage: English")}
                     />
                     <View style={styles.divider} />
                     <SettingItem

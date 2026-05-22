@@ -35,7 +35,6 @@ import MyBookingsScreen from '../screens/MyBookingsScreen';
 import ActiveSessionsScreen from '../screens/ActiveSessionsScreen';
 import TestScreen from '../screens/TestScreen';
 import ContactsScreen from '../screens/ContactsScreen';
-import ContactDetailsScreen from '../screens/ContactDetailsScreen';
 
 import { useAlert } from '../context/AlertContext';
 import { authService } from '../services/auth';
@@ -145,7 +144,6 @@ export default function AppNavigator() {
                     options={{ animation: 'none', headerShown: false }}
                 />
                 <Stack.Screen name="Contacts" component={ContactsScreen} />
-                <Stack.Screen name="ContactDetails" component={ContactDetailsScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );

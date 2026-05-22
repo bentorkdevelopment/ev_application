@@ -4,7 +4,7 @@ import Svg, { Path, G } from 'react-native-svg'
 import { authService } from '../services/auth';
 import { NotificationService } from '../services/NotificationService';
 import SpInAppUpdates from 'sp-react-native-in-app-updates';
-import { BlurView } from '@react-native-community/blur';
+// import { BlurView } from '@react-native-community/blur';
 import UpdateRequiredModal from '../components/UpdateRequiredModal';
 
 const { width, height } = Dimensions.get('window')
@@ -369,7 +369,7 @@ export default function SplashScreen({ navigation, route } = {}) {
                 */}
 
                     {/* Dark Green Blob: #082f20 */}
-                    <BlobLayer
+                    {/* <BlobLayer
                         path={PATH_GREEN}
                         color="#082f20"
                         duration={2000} // Pulse Duration
@@ -381,10 +381,10 @@ export default function SplashScreen({ navigation, route } = {}) {
                         opacity={Animated.multiply(Animated.multiply(blob1Exit, blob1Enter), 0.9)}
                         scaleRange={[1.1, 1.25]}
                         style={{ top: height * 0.25, left: 0 }}
-                    />
+                    /> */}
 
                     {/* Main Brand Green Blob: #008f45 */}
-                    <BlobLayer
+                    {/* <BlobLayer
                         path={PATH_GREEN}
                         color="#008f45"
                         duration={1000} // Faster Pulse
@@ -395,10 +395,10 @@ export default function SplashScreen({ navigation, route } = {}) {
                         opacity={Animated.multiply(Animated.multiply(blob2Exit, blob2Enter), 0.9)}
                         scaleRange={[0.95, 1.05]}
                         style={{ top: height * 0.5, left: -20 }}
-                    />
+                    /> */}
 
                     {/* Light/White Glow Blob: #80e8b1 */}
-                    <BlobLayer
+                    {/* <BlobLayer
                         path={PATH_GREEN}
                         color="#80e8b1"
                         duration={3000} // Medium Pulse
@@ -409,16 +409,16 @@ export default function SplashScreen({ navigation, route } = {}) {
                         opacity={Animated.multiply(Animated.multiply(blob3Exit, blob3Enter), 0.9)}
                         scaleRange={[3.4, 3.6]} // Slight pulse on huge blob
                         style={{ top: height * 0.85, left: 20 }}
-                    />
+                    /> */}
                 </Animated.View>
 
                 {/* 2. Fullscreen Blur Layer */}
-                <BlurView
+                {/* <BlurView
                     style={StyleSheet.absoluteFill}
                     blurType="dark"
                     blurAmount={32} // User edit: 8
                     reducedTransparencyFallbackColor="rgba(0,0,0,0.8)"
-                />
+                /> */}
 
                 {/* 3. Foreground Layer: Logo */}
                 <View style={styles.contentContainer}>

@@ -13,7 +13,7 @@ import { X, Check, Calendar, Clock } from 'lucide-react-native';
 import { format, addDays, isSameDay } from 'date-fns';
 
 import Svg, { Path, G, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
-import { BlurView } from '@react-native-community/blur';
+// import { BlurView } from '@react-native-community/blur';
 import { Colors } from '../styles/GlobalStyles';
 
 import { plansApi, authApi, userApi, sessionApi, slotsApi, slotBookingApi } from '../services/api';
@@ -650,9 +650,8 @@ export default function ConfigScreen({ route }) {
     return (
         <View style={styles.container}>
             {/* Background Blobs & Blur - Confined to Top Area - Only when Available */}
-            {false && isChargerAvailable && (
+            {/* {false && isChargerAvailable && (
                 <View style={[StyleSheet.absoluteFill, { height: height * 0.75, overflow: 'visible' }]}>
-                    {/* Dark Green Blob - Top Right */}
                     <BlobLayer
                         path={PATH_GREEN}
                         color="#082f20"
@@ -666,7 +665,6 @@ export default function ConfigScreen({ route }) {
                         animatedTranslateXLoop={blob1XLoop}
                     />
 
-                    {/* Main Brand Green Blob - Top Right */}
                     <BlobLayer
                         path={PATH_GREEN}
                         color="#008f45"
@@ -680,7 +678,6 @@ export default function ConfigScreen({ route }) {
                         animatedTranslateXLoop={blob2XLoop}
                     />
 
-                    {/* Light Glow Blob - Top Right - Only show on iOS for performance */}
                     {Platform.OS === 'ios' && (
                         <BlobLayer
                             path={PATH_GREEN}
@@ -695,15 +692,8 @@ export default function ConfigScreen({ route }) {
                             animatedTranslateXLoop={blob3XLoop}
                         />
                     )}
-
-                    <BlurView
-                        style={StyleSheet.absoluteFill}
-                        blurType="dark"
-                        blurAmount={Platform.OS === 'android' ? 10 : 20}
-                        reducedTransparencyFallbackColor="rgba(18,18,18,0.9)"
-                    />
                 </View>
-            )}
+            )} */}
 
             {/* ... (TopBar remains same) ... */}
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />

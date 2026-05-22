@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, RefreshControl, Modal } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Calendar, Clock, Zap, X, Play } from 'lucide-react-native';
 import { Colors } from '../styles/GlobalStyles';
@@ -250,7 +250,7 @@ export default function MyBookingsScreen({ navigation }) {
     };
 
     const handleCancel = async (bookingId) => {
-        Alert.alert(
+        showAlert(
             "Cancel Booking",
             "Are you sure you want to cancel this booking?",
             [

@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, StatusBar, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, StatusBar, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft, Car, Battery, Zap, Save, CheckCircle, Trash2 } from 'lucide-react-native';
 import { Colors } from '../styles/GlobalStyles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAlert } from '../context/AlertContext';
 
 const VEHICLE_STORAGE_KEY = '@user_vehicle_details';
 
 export default function VehicleDetailsScreen({ navigation }) {
+    const { showAlert } = useAlert();
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
 
@@ -61,7 +63,7 @@ export default function VehicleDetailsScreen({ navigation }) {
 
     const handleSave = async () => {
         if (!make || !model || !registrationNumber) {
-            Alert.alert("Missing Information", "Please fill in Make, Model and Registration Number.");
+            showAlert("Missing Information", "Please fill in Make, Model and Registration Number.");
             return;
         }
 
@@ -85,19 +87,19 @@ export default function VehicleDetailsScreen({ navigation }) {
             // Simulate API delay
             setTimeout(() => {
                 setSaving(false);
-                Alert.alert("Success", "Vehicle added successfully!");
+                showAlert("Success", "Vehicle added successfully!");
                 resetForm();
             }, 500);
 
         } catch (e) {
             console.error("Failed to save", e);
-            Alert.alert("Error", "Could not save details.");
+            showAlert("Error", "Could not save details.");
             setSaving(false);
         }
     };
 
     const handleDelete = (id) => {
-        Alert.alert(
+        showAlert(
             "Delete Vehicle",
             "Are you sure you want to remove this vehicle?",
             [
@@ -112,7 +114,7 @@ export default function VehicleDetailsScreen({ navigation }) {
                             await AsyncStorage.setItem(VEHICLE_STORAGE_KEY, JSON.stringify(updatedList));
                         } catch (e) {
                             console.error("Failed to delete", e);
-                            Alert.alert("Error", "Could not delete vehicle.");
+                            showAlert("Error", "Could not delete vehicle.");
                         }
                     }
                 }

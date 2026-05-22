@@ -62,30 +62,44 @@ export default function OtpScreen({ navigation, route }) {
                         mobile: response.mobile || phoneNumber
                     };
                     await authService.setUser(userData);
-                }
 
-                // Navigate to target or Home
-                const { postLoginTarget: plt, postLoginParams: plp } = route.params || {};
-                const tcAccepted = await authService.hasAcceptedTerms();
-                if (plt) {
-                    if (!tcAccepted) {
+                    // Navigate to target or Home
+                    const { postLoginTarget: plt, postLoginParams: plp } = route.params || {};
+                    const tcAccepted = await authService.hasAcceptedTerms();
+                    if (plt) {
+                        if (!tcAccepted) {
+                            navigation.reset({
+                                index: 0,
+                                routes: [{ name: 'TermsConsent', params: { nextScreen: plt, nextParams: plp } }]
+                            });
+                        } else {
+                            navigation.replace(plt, plp);
+                        }
+                    } else if (!tcAccepted) {
                         navigation.reset({
                             index: 0,
-                            routes: [{ name: 'TermsConsent', params: { nextScreen: plt, nextParams: plp } }]
+                            routes: [{ name: 'TermsConsent', params: { nextScreen: 'Home' } }],
                         });
                     } else {
-                        navigation.replace(plt, plp);
+                        navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'Home' }],
+                        });
                     }
-                } else if (!tcAccepted) {
-                    navigation.reset({
-                        index: 0,
-                        routes: [{ name: 'TermsConsent', params: { nextScreen: 'Home' } }],
-                    });
                 } else {
-                    navigation.reset({
-                        index: 0,
-                        routes: [{ name: 'Home' }],
-                    });
+                    showAlert(
+                        "Registration Successful",
+                        "Your account was created successfully, but no session token was received. Please log in using Google Sign-In.",
+                        [{
+                            text: "Go to Login",
+                            onPress: () => {
+                                navigation.reset({
+                                    index: 0,
+                                    routes: [{ name: 'Login' }]
+                                });
+                            }
+                        }]
+                    );
                 }
             } catch (error) {
                 setLoading(false);

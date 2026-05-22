@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, Modal, StyleSheet, TouchableOpacity, Linking, Platform, Dimensions, ActivityIndicator } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
-import { Phone, X, User, ShieldAlert } from 'lucide-react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, Modal, StyleSheet, TouchableOpacity, Linking, Platform, Dimensions, ActivityIndicator, Animated } from 'react-native';
+import { Phone, X, User, ShieldAlert, Building2 } from 'lucide-react-native';
 import { Colors, Fonts } from '../styles/GlobalStyles';
 import { emergencyApi } from '../services/api';
 
@@ -11,33 +10,40 @@ const EmergencyContactDialog = ({ visible, onClose, stationId }) => {
     const [contact, setContact] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    const progress = useSharedValue(0);
+    const progress = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
-        if (visible) {
-            progress.value = withTiming(1, { duration: 200 });
-        } else {
-            progress.value = withTiming(0, { duration: 200 });
-        }
+        Animated.timing(progress, {
+            toValue: visible ? 1 : 0,
+            duration: 200,
+            useNativeDriver: true,
+        }).start();
     }, [visible]);
 
-    const overlayStyle = useAnimatedStyle(() => ({
-        opacity: progress.value,
-    }));
+    const overlayStyle = {
+        opacity: progress,
+    };
 
-    const cardStyle = useAnimatedStyle(() => {
-        const translateY = interpolate(progress.value, [0, 1], [100, 0], Extrapolation.CLAMP);
-        const scale = interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP);
-        const opacity = interpolate(progress.value, [0, 0.5, 1], [0, 0, 1], Extrapolation.CLAMP);
-
-        return {
-            opacity,
-            transform: [
-                { translateY: withSpring(translateY, { damping: 1150, stiffness: 1000 }) },
-                { scale: withSpring(scale, { damping: 1150, stiffness: 1000 }) }
-            ],
-        };
-    });
+    const cardStyle = {
+        opacity: progress.interpolate({
+            inputRange: [0, 0.5, 1],
+            outputRange: [0, 0, 1],
+        }),
+        transform: [
+            {
+                translateY: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [100, 0],
+                }),
+            },
+            {
+                scale: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.9, 1],
+                }),
+            },
+        ],
+    };
 
     useEffect(() => {
         if (visible && stationId) {
@@ -50,8 +56,13 @@ const EmergencyContactDialog = ({ visible, onClose, stationId }) => {
         setError(null);
         try {
             const data = await emergencyApi.getContact(stationId);
-            if (data) {
-                setContact(data);
+            console.log(">>> Emergency Contact Data:", data);
+
+            // Normalize response — handle both single object and array response
+            const contactData = Array.isArray(data) ? data[0] : data;
+
+            if (contactData) {
+                setContact(contactData);
             } else {
                 setError("No contact details found.");
             }
@@ -81,13 +92,18 @@ const EmergencyContactDialog = ({ visible, onClose, stationId }) => {
 
     if (!visible) return null;
 
-    const handleCall = () => {
-        if (!contact?.contactNumber) return;
+    // Extraction logic
+    // We prioritize the fields from the admin panel (cpuSupportNumber, companySupportNumber)
+    // but add more fallbacks to ensure something shows up.
+    const cpuNumber = contact?.contactNumber || contact?.contactNumber || contact?.phoneNumber || contact?.phone || contact?.emergencyContact;
+    const companyNumber = contact?.companySupportNumber || contact?.companyPhone || contact?.supportNumber;
+    const stationName = 'Station Support';
+
+    const handleCall = (number) => {
+        if (!number) return;
         const scheme = Platform.OS === 'android' ? 'tel:' : 'telprompt:';
-        Linking.openURL(`${scheme}${contact.contactNumber}`);
+        Linking.openURL(`${scheme}${number}`);
     };
-
-
 
     return (
         <Modal
@@ -112,7 +128,7 @@ const EmergencyContactDialog = ({ visible, onClose, stationId }) => {
                     </View>
 
                     <Text style={styles.subtitle}>
-                        Contact the station manager for immediate assistance with safety or operational issues.
+                        Contact support for immediate assistance with safety or operational issues.
                     </Text>
 
                     {loading ? (
@@ -135,8 +151,7 @@ const EmergencyContactDialog = ({ visible, onClose, stationId }) => {
                                         <User size={24} color="#fff" />
                                     </View>
                                     <View>
-                                        <Text style={styles.managerName}>{contact.name || 'Station Manager'}</Text>
-                                        <Text style={styles.designation}>{contact.designation || 'Manager'}</Text>
+                                        <Text style={styles.managerName}>{stationName}</Text>
                                     </View>
                                 </View>
 
@@ -144,22 +159,39 @@ const EmergencyContactDialog = ({ visible, onClose, stationId }) => {
 
                                 {/* Actions */}
                                 <View style={styles.actionContainer}>
+                                    {/* CPU Support Number */}
                                     <TouchableOpacity
-                                        style={[styles.actionRow, !contact.contactNumber && styles.disabledAction]}
-                                        onPress={handleCall}
-                                        disabled={!contact.contactNumber}
+                                        style={[styles.actionRow, !cpuNumber && styles.disabledAction]}
+                                        onPress={() => handleCall(cpuNumber)}
+                                        disabled={!cpuNumber}
                                     >
                                         <View style={[styles.actionIcon, { backgroundColor: 'rgba(0, 230, 118, 0.1)' }]}>
                                             <Phone size={20} color={Colors.statusGreen} />
                                         </View>
                                         <View style={styles.actionTextContainer}>
-                                            <Text style={styles.actionLabel}>Phone Number</Text>
+                                            <Text style={styles.actionLabel}>CPU Support</Text>
                                             <Text style={[styles.actionValue, { color: Colors.statusGreen }]}>
-                                                {contact.contactNumber || 'Not Available'}
+                                                {cpuNumber || 'Not Available'}
                                             </Text>
                                         </View>
                                     </TouchableOpacity>
 
+                                    {/* Company Support Number */}
+                                    <TouchableOpacity
+                                        style={[styles.actionRow, !companyNumber && styles.disabledAction]}
+                                        onPress={() => handleCall(companyNumber)}
+                                        disabled={!companyNumber}
+                                    >
+                                        <View style={[styles.actionIcon, { backgroundColor: 'rgba(100, 149, 237, 0.1)' }]}>
+                                            <Building2 size={20} color="#6495ED" />
+                                        </View>
+                                        <View style={styles.actionTextContainer}>
+                                            <Text style={styles.actionLabel}>Company Support</Text>
+                                            <Text style={[styles.actionValue, { color: '#6495ED' }]}>
+                                                {companyNumber || 'Not Available'}
+                                            </Text>
+                                        </View>
+                                    </TouchableOpacity>
                                 </View>
                             </View>
                         )

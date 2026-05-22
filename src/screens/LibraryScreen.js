@@ -1,18 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
-import Animated, { 
-    useSharedValue, 
-    useAnimatedStyle, 
-    withSpring, 
-    withTiming, 
-    FadeInDown,
-    Layout,
-    FadeIn,
-    useAnimatedScrollHandler,
-    interpolate,
-    Extrapolation,
-    FadeInLeft
-} from 'react-native-reanimated';
+import { View, Text, StyleSheet, Pressable, Platform, Animated, InteractionManager } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { ChevronRight, Car, Calendar, TrendingUp, Zap, MapPin, Layout as LayoutIcon } from 'lucide-react-native';
@@ -20,27 +7,44 @@ import { authService } from '../services/auth';
 import { Colors } from '../styles/GlobalStyles';
 
 const MenuItem = ({ icon: Icon, title, onPress, subtitle, showChevron = true, color = Colors.white, index = 0 }) => {
-    const scale = useSharedValue(1);
-    const opacity = useSharedValue(1);
+    const scale = React.useRef(new Animated.Value(1)).current;
+    const opacity = React.useRef(new Animated.Value(1)).current;
+    const enterAnim = React.useRef(new Animated.Value(0)).current;
 
-    const animatedStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: scale.value }],
-        opacity: opacity.value,
-    }));
+    React.useEffect(() => {
+        Animated.timing(enterAnim, {
+            toValue: 1,
+            duration: 500,
+            delay: index * 50,
+            useNativeDriver: true,
+        }).start();
+    }, []);
+
+    const animatedStyle = {
+        transform: [
+            { scale },
+            {
+                translateY: enterAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [20, 0],
+                }),
+            },
+        ],
+        opacity: Animated.multiply(opacity, enterAnim),
+    };
 
     const onPressIn = () => {
-        scale.value = withSpring(0.97, { damping: 60, stiffness: 600 });
-        opacity.value = withTiming(0.8, { duration: 100 });
+        Animated.spring(scale, { toValue: 0.97, useNativeDriver: true }).start();
+        Animated.timing(opacity, { toValue: 0.8, duration: 100, useNativeDriver: true }).start();
     };
 
     const onPressOut = () => {
-        scale.value = withSpring(1, { damping: 60, stiffness: 600 });
-        opacity.value = withTiming(1, { duration: 100 });
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true }).start();
+        Animated.timing(opacity, { toValue: 1, duration: 100, useNativeDriver: true }).start();
     };
 
     return (
         <Animated.View 
-            entering={FadeInDown.delay(index * 50).springify().damping(60)}
             style={animatedStyle}
         >
             <Pressable
@@ -68,11 +72,22 @@ export default function LibraryScreen({ navigation }) {
     const isFocused = useIsFocused();
     const [user, setUser] = useState(null);
     const [isLoaded, setIsLoaded] = useState(false);
-    const scrollY = useSharedValue(0);
+    const scrollY = React.useRef(new Animated.Value(0)).current;
+    const fadeAnim = React.useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         if (isFocused) {
-            loadUser();
+            const task = InteractionManager.runAfterInteractions(() => {
+                loadUser();
+                Animated.timing(fadeAnim, {
+                    toValue: 1,
+                    duration: 400,
+                    useNativeDriver: true,
+                }).start();
+            });
+            return () => task.cancel();
+        } else {
+            fadeAnim.setValue(0);
         }
     }, [isFocused]);
 
@@ -85,37 +100,30 @@ export default function LibraryScreen({ navigation }) {
         }
     };
 
-    const scrollHandler = useAnimatedScrollHandler({
-        onScroll: (event) => {
-            scrollY.value = event.contentOffset.y;
-        },
-    });
-
-    const headerAnimatedStyle = useAnimatedStyle(() => {
-        const opacity = interpolate(scrollY.value, [0, 50], [1, 0], Extrapolation.CLAMP);
-        const translateY = interpolate(scrollY.value, [0, 50], [0, -10], Extrapolation.CLAMP);
-        return { opacity, transform: [{ translateY }] };
-    });
-
     return (
         <Animated.ScrollView
-            onScroll={scrollHandler}
+            onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                { useNativeDriver: true }
+            )}
             scrollEventThrottle={16}
             style={styles.container}
             contentContainerStyle={[styles.contentContainer]}
             showsVerticalScrollIndicator={false}
         >
             
-
-
-
             <Animated.View 
-                entering={FadeIn.duration(400)}
-                style={styles.sectionContainer}
+                style={[styles.sectionContainer, { opacity: fadeAnim }]}
             >
                 <Animated.Text 
-                    entering={FadeInDown.delay(300).springify()}
-                    style={styles.sectionTitle}
+                    style={[styles.sectionTitle, {
+                        transform: [{
+                            translateY: fadeAnim.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [20, 0],
+                            })
+                        }]
+                    }]}
                 >
                     My Activity
                 </Animated.Text>
@@ -156,11 +164,20 @@ export default function LibraryScreen({ navigation }) {
             {/* Developer Section */}
             {(user && (user.email?.toLowerCase().includes('om.lokhande34') || user.email?.toLowerCase().includes('jayeshmahajan340') || user.email?.toLowerCase().includes('sj020420'))) && (
                 <Animated.View 
-                    layout={Layout.springify()}
-                    entering={FadeInDown.springify().damping(60)}
-                    style={styles.sectionContainer}
+                    style={[styles.sectionContainer, { opacity: fadeAnim }]}
                 >
-                    <Text style={styles.sectionTitle}>Developer</Text>
+                    <Animated.Text 
+                        style={[styles.sectionTitle, {
+                            transform: [{
+                                translateY: fadeAnim.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [20, 0],
+                                })
+                            }]
+                        }]}
+                    >
+                        Developer
+                    </Animated.Text>
                     <View style={styles.menuGroup}>
                         <MenuItem
                             icon={LayoutIcon}
@@ -171,10 +188,6 @@ export default function LibraryScreen({ navigation }) {
                     </View>
                 </Animated.View>
             )}
-
-
-
-
 
             <View style={{ height: 100 + insets.bottom }} />
         </Animated.ScrollView>
@@ -190,19 +203,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingTop: 20,
     },
-    headerTitle: {
-        fontSize: 28,
-        fontWeight: 'bold',
-        color: Colors.white,
-        marginTop: 20,
-    },
-    headerSubtitle: {
-        fontSize: 14,
-        color: '#666',
-        marginBottom: 30,
-        marginTop: 4,
-    },
-    // Sections
     sectionContainer: {
         marginBottom: 24,
     },
@@ -214,13 +214,13 @@ const styles = StyleSheet.create({
         marginLeft: 4,
         textTransform: 'uppercase',
         letterSpacing: 1,
+        fontFamily: 'Google Sans',
     },
     menuGroup: {
         backgroundColor: '#141414ff',
         borderRadius: 1,
         overflow: 'hidden',
     },
-    // Menu Item
     menuItem: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -244,10 +244,12 @@ const styles = StyleSheet.create({
     menuItemText: {
         fontSize: 16,
         fontWeight: '500',
+        fontFamily: 'Google Sans',
     },
     menuItemSubtitle: {
         color: '#666',
         fontSize: 12,
         marginTop: 2,
+        fontFamily: 'Google Sans',
     },
 });

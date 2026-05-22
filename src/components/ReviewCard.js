@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
 import StarRating from './StarRating';
 import { Colors } from '../styles/GlobalStyles';
 import { userApi } from '../services/api';
 import { authService } from '../services/auth';
 import { MoreVertical, User, Edit2, Trash2 } from 'lucide-react-native';
 import { formatDistanceToNow } from 'date-fns';
+import { useAlert } from '../context/AlertContext';
 
 const ReviewCard = ({ review, onEdit, onDelete, isOwnReview }) => {
+    const { showAlert } = useAlert();
     const [showOptions, setShowOptions] = useState(false);
     const [author, setAuthor] = useState({
         name: review.user?.name || 'Anonymous User',
@@ -103,7 +105,7 @@ const ReviewCard = ({ review, onEdit, onDelete, isOwnReview }) => {
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.optionItem} onPress={() => {
                         setShowOptions(false);
-                        Alert.alert("Delete Review", "Are you sure?", [
+                        showAlert("Delete Review", "Are you sure?", [
                             { text: "Cancel", style: "cancel" },
                             { text: "Delete", style: "destructive", onPress: () => onDelete(review.id) }
                         ]);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { Colors } from '../styles/GlobalStyles';
 import { MessageSquarePlus } from 'lucide-react-native';
 import { reviewsApi } from '../services/api';
@@ -7,8 +7,10 @@ import { authService } from '../services/auth';
 import ReviewCard from './ReviewCard';
 import AddReviewModal from './AddReviewModal';
 import StarRating from './StarRating';
+import { useAlert } from '../context/AlertContext';
 
 export default function StationReviewsTab({ stationId, stationName }) {
+    const { showAlert } = useAlert();
     const [reviews, setReviews] = useState([]);
     const [loading, setLoading] = useState(true);
     const [summary, setSummary] = useState(null);
@@ -61,7 +63,7 @@ export default function StationReviewsTab({ stationId, stationName }) {
             fetchData();
         } catch (error) {
             console.error("Delete failed:", error);
-            Alert.alert("Error", "Failed to delete review.");
+            showAlert("Error", "Failed to delete review.");
         }
     };
 

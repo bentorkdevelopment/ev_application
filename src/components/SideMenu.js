@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, Image, Platform, PanResponder, Easing, Modal, Linking, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, User, ChevronRight, Wallet, Settings, HelpCircle, MessageCircle, Info, FileText, LogOut, MapPin, Mail, Phone, CheckCircle } from 'lucide-react-native';
+import { X, User, ChevronRight, Wallet, Settings, HelpCircle, MessageCircle, Info, FileText, LogOut, MapPin, Mail, Phone, CheckCircle, Users } from 'lucide-react-native';
 import { Colors } from '../styles/GlobalStyles';
 import { authService } from '../services/auth';
-import DeviceInfo from 'react-native-device-info';
+
 
 
 const MenuItem = ({ icon: Icon, label, onPress, active = false }) => (
@@ -26,7 +26,7 @@ export default function SideMenu({ visible, onClose, navigation }) {
 
     const insets = useSafeAreaInsets();
     const [user, setUser] = useState(null);
-    const [appVersion, setAppVersion] = useState('');
+
     const [isBuyModalVisible, setIsBuyModalVisible] = useState(false);
     const slideAnim = useRef(new Animated.Value(-1000)).current; // Start hidden (large negative value)
     const fadeAnim = useRef(new Animated.Value(0)).current; // Overlay fade
@@ -99,15 +99,7 @@ export default function SideMenu({ visible, onClose, navigation }) {
         }
     }, [visible, DRAWER_WIDTH]);
 
-    useEffect(() => {
-        const fetchVersion = async () => {
-            const version = DeviceInfo.getVersion();
-            const build = DeviceInfo.getBuildNumber();
-            const isDebug = __DEV__;
-            setAppVersion(`Version ${version} (Build ${build}) - ${isDebug ? '(Debug)' : '(Release)'}`);
-        };
-        fetchVersion();
-    }, []);
+
 
     const loadUser = async () => {
         const userData = await authService.getUser();
@@ -215,7 +207,7 @@ export default function SideMenu({ visible, onClose, navigation }) {
 
                     <MenuItem icon={MapPin} label="Buy Station" onPress={handleBuyStation} />
                     <MenuItem icon={HelpCircle} label="FAQs" onPress={() => handleNavigation('FAQ')} />
-                    <MenuItem icon={MessageCircle} label="Contact Support" onPress={() => { }} />
+                    <MenuItem icon={Users} label="Contacts" onPress={() => handleNavigation('Contacts')} />
                     <MenuItem icon={Info} label="About" onPress={() => handleNavigation('About')} />
                     <MenuItem icon={FileText} label="Terms & Conditions" onPress={() => handleNavigation('Terms')} />
 
@@ -227,9 +219,7 @@ export default function SideMenu({ visible, onClose, navigation }) {
                     </TouchableOpacity>
                 </ScrollView>
 
-                <View style={styles.footer}>
-                    <Text style={styles.versionText}>{appVersion}</Text>
-                </View>
+
 
             </Animated.View>
 
@@ -274,7 +264,7 @@ export default function SideMenu({ visible, onClose, navigation }) {
                                     <Text style={styles.emailText}>Message on WhatsApp</Text>
                                 </TouchableOpacity>
                             </View> */}
-                            
+
                             <TouchableOpacity style={styles.primaryBtn} onPress={contactWhatsApp}>
                                 <Text style={styles.primaryBtnText}>Contact on WhatsApp</Text>
                             </TouchableOpacity>
@@ -410,16 +400,7 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         marginLeft: 15,
     },
-    footer: {
-        padding: 20,
-        alignItems: 'center',
-        borderTopWidth: 1,
-        borderTopColor: '#252525',
-    },
-    versionText: {
-        color: '#555',
-        fontSize: 11,
-    },
+
     // Modal Styles
     modalOverlay: {
         flex: 1,

@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated3, { useSharedValue, useAnimatedStyle, withSpring, interpolate } from 'react-native-reanimated';
 import { ChevronLeft } from 'lucide-react-native';
 
 /**
@@ -12,61 +11,86 @@ export default function TestScreen({ navigation, route }) {
     const { isSharedDemo, sourceLayout } = route.params || {};
 
     // Manual Shared Transition Logic
-    const animProgress = useSharedValue(0);
+    const animProgress = React.useRef(new Animated.Value(0)).current;
     const targetRef = useRef(null);
     const [targetLayout, setTargetLayout] = useState(null);
 
     useEffect(() => {
         if (isSharedDemo && sourceLayout) {
-            animProgress.value = 0;
-            // The withSpring will start once we have the target layout via onLayout
+            animProgress.setValue(0);
         }
     }, [isSharedDemo, sourceLayout]);
 
-    const flyingSquareStyle = useAnimatedStyle(() => {
-        if (!sourceLayout || !targetLayout) {
-            return { opacity: 0 };
-        }
+    const flyingSquareStyle = (!sourceLayout || !targetLayout) ? { opacity: 0 } : {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: sourceLayout.width,
+        height: sourceLayout.height,
+        borderRadius: 12,
+        backgroundColor: '#39E29B',
+        zIndex: 9999,
+        transform: [
+            { translateX: sourceLayout.x },
+            { translateY: sourceLayout.y },
+            {
+                translateX: animProgress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, targetLayout.x - sourceLayout.x + (targetLayout.width - sourceLayout.width) / 2]
+                })
+            },
+            {
+                translateY: animProgress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, targetLayout.y - sourceLayout.y + (targetLayout.height - sourceLayout.height) / 2]
+                })
+            },
+            {
+                scaleX: animProgress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, targetLayout.width / sourceLayout.width]
+                })
+            },
+            {
+                scaleY: animProgress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, targetLayout.height / sourceLayout.height]
+                })
+            },
+            {
+                scale: animProgress.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: [1, 1.1, 1]
+                })
+            }
+        ],
+        shadowColor: '#39E29B',
+        shadowOpacity: 0.5,
+        shadowRadius: 20,
+        elevation: 10,
+    };
 
-        // We use animProgress.value (0 to 1) to interpolate everything
-        const top = interpolate(animProgress.value, [0, 1], [sourceLayout.y, targetLayout.y]);
-        const left = interpolate(animProgress.value, [0, 1], [sourceLayout.x, targetLayout.x]);
-        const width = interpolate(animProgress.value, [0, 1], [sourceLayout.width, targetLayout.width]);
-        const height = interpolate(animProgress.value, [0, 1], [sourceLayout.height, targetLayout.height]);
-        const borderRadius = interpolate(animProgress.value, [0, 1], [12, 20]);
-        const scale = interpolate(animProgress.value, [0, 0.5, 1], [1, 1.2, 1]); // Pop effect
-
-        return {
-            position: 'absolute',
-            top,
-            left,
-            width,
-            height,
-            borderRadius,
-            backgroundColor: '#39E29B',
-            zIndex: 9999,
-            transform: [{ scale }],
-            shadowColor: '#39E29B',
-            shadowOffset: { width: 0, height: 15 * animProgress.value },
-            shadowOpacity: 0.5 * animProgress.value,
-            shadowRadius: 20 * animProgress.value,
-            elevation: 10 * animProgress.value,
-        };
-    });
-
-    const contentStyle = useAnimatedStyle(() => ({
-        opacity: interpolate(animProgress.value, [0, 0.5, 1], [0, 0, 1]),
-        transform: [{ translateY: interpolate(animProgress.value, [0, 1], [20, 0]) }]
-    }));
+    const contentStyle = {
+        opacity: animProgress.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] }),
+        transform: [{
+            translateY: animProgress.interpolate({ inputRange: [0, 1], outputRange: [20, 0] })
+        }]
+    };
 
     const handleTargetLayout = () => {
         if (targetLayout) return; // Only measure once
-        
+
         if (targetRef.current) {
             targetRef.current.measureInWindow((x, y, width, height) => {
                 if (width > 0) {
                     setTargetLayout({ x, y, width, height });
-                    animProgress.value = withSpring(1, { damping: 70, stiffness: 700 });
+                    // Use native driver for 60fps UI thread animations
+                    Animated.spring(animProgress, {
+                        toValue: 1,
+                        friction: 9,
+                        tension: 40,
+                        useNativeDriver: true
+                    }).start();
                 }
             });
         }
@@ -75,7 +99,7 @@ export default function TestScreen({ navigation, route }) {
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor="#1a1a1a" />
-            
+
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -84,14 +108,14 @@ export default function TestScreen({ navigation, route }) {
                 <Text style={styles.headerTitle}>Animation Lab</Text>
             </View>
 
-            <Animated3.View style={[styles.content, contentStyle]}>
+            <Animated.View style={[styles.content, contentStyle]}>
                 {/* Shared Transition Demo Area */}
                 {isSharedDemo && (
                     <View style={styles.sharedDemoHeader}>
-                        <View 
+                        <View
                             ref={targetRef}
                             onLayout={handleTargetLayout}
-                            style={[styles.demoSquareLarge, { backgroundColor: 'transparent' }]} 
+                            style={[styles.demoSquareLarge, { backgroundColor: 'transparent' }]}
                         />
                         <View style={{ flex: 1 }}>
                             <Text style={styles.demoTitle}>Transition Success!</Text>
@@ -99,17 +123,17 @@ export default function TestScreen({ navigation, route }) {
                         </View>
                     </View>
                 )}
-                
+
                 <View style={styles.infoCard}>
                     <Text style={styles.infoText}>
                         Observe how the square expansion is perfectly timed with the screen fade-in.
                         This uses Reanimated 3 with absolute screen coordinates.
                     </Text>
                 </View>
-            </Animated3.View>
+            </Animated.View>
 
             {/* The Flying Square Overlay - Always on top */}
-            <Animated3.View style={flyingSquareStyle} pointerEvents="none" />
+            <Animated.View style={flyingSquareStyle} pointerEvents="none" />
         </SafeAreaView>
     );
 }
